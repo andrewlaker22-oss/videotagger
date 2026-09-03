@@ -94,8 +94,8 @@ def apify_input(platform, handle, n):
         p = h.replace("https://www.tiktok.com/@","").replace("@","").strip("/")
         return {"profiles":[p], "resultsPerPage":n, "shouldDownloadVideos":False}
     if platform == "instagram":
-        u = h.replace("https://www.instagram.com/","").replace("@","").strip("/")
-        return {"username":[u], "resultsLimit":n, "resultsType":"posts"}
+        u = h.replace("https://www.instagram.com/","").replace("http://www.instagram.com/","").replace("@","").strip("/")
+        return {"directUrls":[f"https://www.instagram.com/{u}/"], "resultsLimit":n, "resultsType":"posts"}
     if platform == "youtube":
         url = h if h.startswith("http") else f"https://www.youtube.com/@{h.lstrip('@')}"
         return {"startUrls":[{"url":url}], "maxResults":n, "maxResultsShorts":n}
