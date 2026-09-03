@@ -108,8 +108,14 @@ def scrape_profile(jid, platform, handle, n):
     client = ApifyClient(APIFY_TOKEN)
     job_log(jid, f"Pulling last {n} videos from {platform} @{handle}")
     run = client.actor(ACTORS[platform]).call(run_input=apify_input(platform, handle, n))
+    if run is None:
+        raise RuntimeError("Apify run failed or returned nothing. Check the handle and that the profile is public.")
+    # apify-client v3 returns a Run object; older versions returned a dict. Handle both.
+    dataset_id = getattr(run, "default_dataset_id", None) or (run.get("defaultDatasetId") if hasattr(run, "get") else None)
+    if not dataset_id:
+        raise RuntimeError("Apify run finished but had no dataset.")
     out, seen = [], set()
-    for it in client.dataset(run["defaultDatasetId"]).iterate_items():
+    for it in client.dataset(dataset_id).iterate_items():
         url = first_of(it, ["url","webVideoUrl","videoUrl","postUrl","webpage_url","link","permalink"])
         if not url or url in seen: continue
         seen.add(url)
