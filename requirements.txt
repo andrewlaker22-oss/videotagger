@@ -1,0 +1,5 @@
+flask>=3.0
+gunicorn>=21
+apify-client>=1.7
+google-genai>=1.0
+yt-dlp>=2025.1.1
