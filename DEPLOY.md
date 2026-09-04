@@ -63,26 +63,27 @@ TikTok, Instagram, and Facebook still use yt-dlp to download a temporary video f
 
 ## Results and analysis fields
 
-The selected count means the most recent posts total, including videos, single images, and carousels. Each carousel is one asset. The standard analysis includes the opening hook, people/count/visible age range, specified-brand logo presence and timing, asset summary, dominant colors, visual details, on-screen text, a clean spoken transcript for videos, and up to 15 normalized object tags.
+The selected count means the most recent posts total, including videos, single images, and carousels. Each carousel is one asset. The standard analysis includes the opening hook, people/count/visible age range, automatically identified visible brand/logo, asset summary, dominant colors, visual details, on-screen text, a clean spoken transcript for videos, and up to 15 normalized object tags.
 
-The finished page displays an AI-written findings summary, counts by asset type, average follower-based engagement rate, top object tags with averages, and clickable high/low outliers. The AI summary is also written in the first row of the raw CSV.
+The finished page displays a specific bullet-point findings summary, counts by asset type, average view-based engagement rate, top object tags with averages, and clickable high/low outliers. The findings summary stays on the webpage and is not repeated in the CSV.
 
-Two files are available after each run:
+The download after each run is a pivot-ready CSV:
 
-- Raw CSV: one row per asset with public engagement counts and all analysis fields.
-- Excel Analysis Report: `Summary`, `Assets`, `Object Tags`, and `Tag Averages` sheets. The normalized Object Tags sheet has one row per asset/tag combination, so tags such as `burrito bowl` can be filtered and averaged without splitting comma-separated text.
+- One row per asset with public engagement counts and all analysis fields.
+- Object tags are separated into `Object 1` through `Object 15`; there is no combined object-tags column.
+- Opening text is explicitly labeled as video seconds 0–2, the complete static image, or carousel slide 1. The all-visible-text field covers the full video or every carousel slide.
 
 Engagement calculations:
 
-- Known Engagements = reactions + comments + shares + saves, using only publicly available fields.
-- Engagement Rate = Known Engagements / Account Followers.
-- View Engagement Rate = Known Engagements / Views. When views are unavailable the cell says `No public views available`.
+- Total Engagements = reactions + comments + shares + saves, using only publicly available fields.
+- Engagement Rate = Total Engagements / Views.
+- Engagement Rate and Engagement Outlier remain blank when public views are unavailable.
 - Shares and saves remain blank when a platform does not expose them; blank does not mean zero.
-- With at least 10 comparable follower-based rates, High Outlier is at least two sample standard deviations above the run mean and Low Outlier is at least two below it. All asset types in the current run are compared together.
+- With at least 10 comparable view-based rates, High Outlier is at least two sample standard deviations above the run mean and Low Outlier is at least two below it. All asset types in the current run are compared together.
 
 The home page also has two optional fields:
 
-- Brand or product to look for. If blank, brand/logo fields say `Not specified`.
+- Brand or product to look for. If blank, the app automatically identifies the strongest recognizable visible brand or logo.
 - Custom analysis focus. This is capped at 1,000 characters and adds a `Custom Focus Findings` CSV column without replacing the standard analysis.
 
 Web, news, Reddit, and X research is not enabled in this build.

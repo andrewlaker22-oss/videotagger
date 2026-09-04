@@ -2,7 +2,7 @@
 Video Tagger - hosted web app.
 
 Someone opens the link, enters their access code, pastes a profile, picks up to 50 recent assets,
-and gets a raw CSV plus an Excel analysis report. Your Apify + Gemini keys live only in env vars.
+and gets a pivot-ready raw CSV. Your Apify + Gemini keys live only in env vars.
 
 Run locally:   python app.py      (then http://127.0.0.1:8080)
 Deploy:        see DEPLOY.md
@@ -81,14 +81,16 @@ ACTORS = {
     "youtube":   "streamers/youtube-scraper",
     "facebook":  "apify/facebook-posts-scraper",
 }
+OBJECT_COLUMNS = ["Object %d" % i for i in range(1, 16)]
 COLUMNS = ["Asset ID","Platform","Asset Type","Slide Count","Duration Seconds","Asset Link","Post Date",
-           "Account Followers","Views","Reaction Count","Comment Count","Share Count","Save Count",
-           "Engagement Data Available","Known Engagements","Engagement Rate","View Engagement Rate","Engagement Outlier","Post Copy",
-           "Opening Text","All On-Screen Text","Full Spoken Transcript","Hook Type","Hook Description",
+           "Views","Reaction Count","Comment Count","Share Count","Save Count","Total Engagements",
+           "Engagement Rate","Engagement Outlier","Post Copy",
+           "Opening Text (Video First 2s / Static Image / Carousel Slide 1)",
+           "All Visible Text (Full Video / All Carousel Slides)",
+           "Full Spoken Transcript","Hook Type","Hook Description",
            "People Present","Number of People","People Description","Approximate Age Range",
-           "Brand Logo Present","Brand/Logo Identified","Logo Timing or Placement","Asset Summary",
-           "Run Findings Summary","Dominant Colors","visualDescription","Object Tags","visualTechniques",
-           "Custom Focus Findings","Est. Cost (USD)"]
+           "Brand/Logo Detected","Asset Summary","Dominant Colors","Visual Description"] + OBJECT_COLUMNS + [
+           "Visual Techniques","Custom Focus Findings","Est. Cost (USD)"]
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -373,9 +375,10 @@ def download_image(url, workdir, index):
 def gemini_prompt(media_kind="Video", focus="", brand_topic=""):
     focus = (focus or "").strip()[:1000]
     brand_topic = (brand_topic or "").strip()[:200]
-    brand_rule = ("Only evaluate whether this specified brand/product is visibly present: " + json.dumps(brand_topic) + "."
+    brand_rule = (("Prioritize this brand/product when identifying the visible brand: " + json.dumps(brand_topic) +
+                   ". Return its exact name when visible. If it is absent but a different primary brand/logo is clearly visible, identify that brand instead.")
                   if brand_topic else
-                  "No brand/product was specified. Set brand_logo_present and brand_logo_identified to 'Not specified', and logo_timing_placement to an empty string.")
+                  "Automatically identify the strongest clearly recognizable primary brand or logo from visible packaging, products, signs, or wordmarks.")
     focus_rule = ("Analyze this additional user focus and put the answer only in custom_focus_findings: " + json.dumps(focus) + "."
                   if focus else "No custom focus was supplied. Set custom_focus_findings to an empty string.")
     opening_rule = ("For video, opening_text is text visible only during 00:00-00:02."
@@ -395,9 +398,7 @@ def gemini_prompt(media_kind="Video", focus="", brand_topic=""):
   "people_count": "Visible number, a range if a crowd, or Unclear.",
   "people_description": "Visible role, clothing, activity, and presentation only. Do not infer sensitive traits.",
   "approximate_age_range": "Use only broad visible ranges: child, teen, 18-24, 25-34, 35-54, 55+, mixed, or Unclear. Do not guess any other sensitive trait.",
-  "brand_logo_present": "Yes, No, Unclear, or Not specified.",
-  "brand_logo_identified": "Specified brand/product name when visibly present; otherwise No, Unclear, or Not specified.",
-  "logo_timing_placement": "Where and approximately when or on which slide the specified logo/product appears; empty if not present or not specified.",
+  "brand_logo_detected": "Exact visible brand/logo name. If none is recognizable, return None. If a mark is visible but unreadable, return Unclear.",
   "asset_summary": "One concise sentence summarizing the whole asset.",
   "dominant_colors": "Comma-separated dominant colors visible across the asset.",
   "visual_description": "2-3 sentences on the scene, setting, and visual style.",
@@ -525,28 +526,26 @@ def normalize_object_tags(raw):
 
 def apply_engagement_and_outliers(rows):
     for row in rows:
-        available, values = [], []
-        for label, key in (("reactions","Reaction Count"),("comments","Comment Count"),("shares","Share Count"),("saves","Save Count")):
+        values = []
+        for key in ("Reaction Count","Comment Count","Share Count","Save Count"):
             value = row.get(key)
             if isinstance(value, (int,float)):
-                available.append(label); values.append(value)
-        row["Engagement Data Available"] = ", ".join(available)
-        row["Known Engagements"] = sum(values) if values else ""
-        followers, views = row.get("Account Followers"), row.get("Views")
-        row["Engagement Rate"] = (sum(values)/followers) if values and isinstance(followers,(int,float)) and followers > 0 else "No public follower count available"
-        row["View Engagement Rate"] = (sum(values)/views) if values and isinstance(views,(int,float)) and views > 0 else "No public views available"
+                values.append(value)
+        total, views = (sum(values) if values else ""), row.get("Views")
+        row["Total Engagements"] = total
+        row["Engagement Rate"] = (total/views) if isinstance(total,(int,float)) and isinstance(views,(int,float)) and views > 0 else ""
     rates = [r["Engagement Rate"] for r in rows if isinstance(r.get("Engagement Rate"),(int,float))]
     if len(rates) >= OUTLIER_MIN_N:
         avg = statistics.mean(rates); sd = statistics.stdev(rates)
         for row in rows:
             rate = row.get("Engagement Rate")
-            if not isinstance(rate,(int,float)): row["Engagement Outlier"] = "No comparable rate"
+            if not isinstance(rate,(int,float)): row["Engagement Outlier"] = ""
             elif sd and rate >= avg + 2*sd: row["Engagement Outlier"] = "High Outlier"
             elif sd and rate <= avg - 2*sd: row["Engagement Outlier"] = "Low Outlier"
             else: row["Engagement Outlier"] = "Typical"
     else:
         for row in rows:
-            row["Engagement Outlier"] = "Insufficient sample" if isinstance(row.get("Engagement Rate"),(int,float)) else "No comparable rate"
+            row["Engagement Outlier"] = "Insufficient sample" if isinstance(row.get("Engagement Rate"),(int,float)) else ""
     return statistics.mean(rates) if rates else None
 
 def build_tag_rows(rows):
@@ -554,8 +553,8 @@ def build_tag_rows(rows):
     for row in rows:
         for tag in row.get("_object_tags", []):
             tag_rows.append({"Asset ID":row["Asset ID"], "Asset Link":row["Asset Link"], "Asset Type":row["Asset Type"],
-                "Object Tag":tag["tag"], "Category":tag["category"], "Known Engagements":row["Known Engagements"],
-                "Engagement Rate":row["Engagement Rate"], "View Engagement Rate":row["View Engagement Rate"],
+                "Object Tag":tag["tag"], "Category":tag["category"], "Total Engagements":row["Total Engagements"],
+                "Engagement Rate":row["Engagement Rate"],
                 "Engagement Outlier":row["Engagement Outlier"], "Views":row["Views"], "Reaction Count":row["Reaction Count"],
                 "Comment Count":row["Comment Count"], "Share Count":row["Share Count"], "Save Count":row["Save Count"]})
     return tag_rows
@@ -570,35 +569,52 @@ def build_tag_stats(tag_rows):
     result = []
     for (tag, category), items in groups.items():
         result.append({"Object Tag":tag, "Category":category, "Asset Count":len(items),
-            **{"Average " + k:average_numeric(items,k) for k in ("Known Engagements","Engagement Rate","View Engagement Rate","Views","Reaction Count","Comment Count","Share Count","Save Count")}})
+            **{"Average " + k:average_numeric(items,k) for k in ("Total Engagements","Engagement Rate","Views","Reaction Count","Comment Count","Share Count","Save Count")}})
     return sorted(result, key=lambda x:(-x["Asset Count"], -(x.get("Average Engagement Rate") or -1), x["Object Tag"]))
 
 def deterministic_summary(rows, dashboard):
     counts = dashboard["counts"]
-    parts = ["Analyzed %d assets: %d videos, %d images, and %d carousels." %
-             (len(rows), counts.get("Video",0), counts.get("Image",0), counts.get("Carousel",0))]
+    analyzed = sum(1 for r in rows if not str(r.get("Asset Summary","")).startswith("[skipped"))
+    parts = ["Asset mix: %d total — %d videos, %d images, and %d carousels." %
+             (len(rows), counts.get("Video",0), counts.get("Image",0), counts.get("Carousel",0)),
+             "Creative analysis completed for %d of %d assets%s." %
+             (analyzed, len(rows), " (%d skipped; see the run log)" % (len(rows)-analyzed) if analyzed < len(rows) else "")]
     if dashboard.get("average_engagement_rate") is not None:
-        parts.append("Average follower-based engagement rate was %.2f%%." % (100*dashboard["average_engagement_rate"]))
-    top = [x["tag"] for x in dashboard.get("top_tags",[])[:5]]
-    if top: parts.append("The most common visible objects were " + ", ".join(top) + ".")
+        comparable = sum(1 for r in rows if isinstance(r.get("Engagement Rate"),(int,float)))
+        parts.append("Average engagement rate by public views was %.2f%% across %d comparable assets." %
+                     (100*dashboard["average_engagement_rate"], comparable))
+    top = dashboard.get("top_tags",[])[:5]
+    if top: parts.append("Most common visible objects: " + ", ".join("%s (%d assets)" % (x["tag"],x["count"]) for x in top) + ".")
     high = sum(1 for x in dashboard.get("outliers",[]) if x["label"] == "High Outlier")
     low = sum(1 for x in dashboard.get("outliers",[]) if x["label"] == "Low Outlier")
-    if high or low: parts.append("The run contained %d high and %d low engagement outliers." % (high, low))
-    elif len(rows) < OUTLIER_MIN_N: parts.append("At least 10 comparable assets are required for outlier labeling.")
-    return " ".join(parts)
+    if high or low: parts.append("Engagement outliers: %d high and %d low, using ±2 standard deviations." % (high, low))
+    elif sum(1 for r in rows if isinstance(r.get("Engagement Rate"),(int,float))) < OUTLIER_MIN_N:
+        parts.append("Outliers were not calculated because fewer than 10 assets had public views and a comparable engagement rate.")
+    else: parts.append("No high or low engagement outliers were found at the ±2 standard-deviation threshold.")
+    return "\n".join("• " + part for part in parts)
 
 def generate_run_summary(rows, dashboard):
     from google import genai
     from google.genai import types
-    compact = [{"id":r["Asset ID"],"type":r["Asset Type"],"summary":r["Asset Summary"],"hook":r["Hook Description"],
-                "objects":[x["tag"] for x in r.get("_object_tags",[])],"engagement_rate":r["Engagement Rate"],"outlier":r["Engagement Outlier"]}
+    compact = [{"id":r["Asset ID"],"type":r["Asset Type"],"summary":r["Asset Summary"],
+                "hook_type":r["Hook Type"],"hook":r["Hook Description"],
+                "opening_text":r["Opening Text (Video First 2s / Static Image / Carousel Slide 1)"],
+                "objects":[x["tag"] for x in r.get("_object_tags",[])],"colors":r["Dominant Colors"],
+                "visual_techniques":r["Visual Techniques"],"engagement_rate":r["Engagement Rate"],"outlier":r["Engagement Outlier"]}
                for r in rows if not str(r.get("Asset Summary","")).startswith("[skipped")]
-    prompt = """Summarize this completed creative-analysis run in 3-5 concise sentences for a marketing team. Identify repeated creative patterns, common visible objects, and meaningful engagement/outlier observations. Do not claim causation and do not invent unavailable metrics. Return JSON: {\"summary\":\"...\"}. Data: """ + json.dumps(compact, ensure_ascii=False)[:40000]
+    if not compact:
+        return deterministic_summary(rows,dashboard), 0.0
+    prompt = """Write 4-6 concise, specific bullet findings for a marketing team. Use only the supplied data. Include concrete evidence such as asset counts, repeated hook or opening-text patterns, common objects with counts, colors or visual techniques, the average view-based engagement rate, and named outlier asset IDs/rates when available. Do not claim causation. Do not give vague advice. Return JSON: {\"bullets\":[\"specific finding\",\"specific finding\"]}. Data: """ + json.dumps({"dashboard":dashboard,"assets":compact}, ensure_ascii=False)[:40000]
     client = genai.Client(api_key=GEMINI_API_KEY)
     resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt,
         config=types.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=1200, temperature=0.2))
     data, cost = _gemini_result(resp, 0, fallback_input_tokens=500*max(1,len(compact))+500)
-    return str(data.get("summary") or deterministic_summary(rows,dashboard)), cost
+    bullets = data.get("bullets")
+    if isinstance(bullets,list):
+        summary = "\n".join("• " + str(x).strip().lstrip("•- ") for x in bullets if str(x).strip())
+    else:
+        summary = ""
+    return summary or deterministic_summary(rows,dashboard), cost
 
 def build_dashboard(rows, tag_stats, avg_er):
     counts = {k:sum(1 for r in rows if r.get("Asset Type") == k) for k in ("Video","Image","Carousel")}
@@ -629,43 +645,53 @@ def write_analysis_workbook(path, rows, tag_rows, tag_stats, summary):
         for name in COLUMNS:
             cix, value = col_index[name], row.get(name,"")
             if name == "Asset Link" and value: assets.write_url(rix,cix,value,link_fmt,value)
-            elif name in ("Engagement Rate","View Engagement Rate") and isinstance(value,(int,float)): assets.write_number(rix,cix,value,percent)
+            elif name == "Engagement Rate" and isinstance(value,(int,float)): assets.write_number(rix,cix,value,percent)
             elif name == "Est. Cost (USD)" and isinstance(value,(int,float)): assets.write_number(rix,cix,value,currency)
             elif isinstance(value,(int,float)): assets.write_number(rix,cix,value,integer)
             else: assets.write(rix,cix,value,text_wrap)
         excel_row = rix + 1
-        known = row.get("Known Engagements",""); er = row.get("Engagement Rate",""); ver = row.get("View Engagement Rate","")
-        assets.write_formula(rix,col_index["Known Engagements"], '=IF(COUNTA(J%d:M%d)=0,"",SUM(J%d:M%d))' % (excel_row,excel_row,excel_row,excel_row), integer, known)
-        assets.write_formula(rix,col_index["Engagement Rate"], '=IFERROR(O%d/H%d,"No public follower count available")' % (excel_row,excel_row), percent, er)
-        assets.write_formula(rix,col_index["View Engagement Rate"], '=IFERROR(O%d/I%d,"No public views available")' % (excel_row,excel_row), percent, ver)
-        outlier_formula = '=IF(COUNT($P$2:$P$%d)<10,"Insufficient sample",IF(NOT(ISNUMBER(P%d)),"No comparable rate",IF(P%d>=AVERAGE($P$2:$P$%d)+2*STDEV.S($P$2:$P$%d),"High Outlier",IF(P%d<=AVERAGE($P$2:$P$%d)-2*STDEV.S($P$2:$P$%d),"Low Outlier","Typical"))))' % (last_row+1,excel_row,excel_row,last_row+1,last_row+1,excel_row,last_row+1,last_row+1)
+        total = row.get("Total Engagements",""); er = row.get("Engagement Rate","")
+        reaction_col = xlsxwriter.utility.xl_col_to_name(col_index["Reaction Count"])
+        save_col = xlsxwriter.utility.xl_col_to_name(col_index["Save Count"])
+        total_col = xlsxwriter.utility.xl_col_to_name(col_index["Total Engagements"])
+        views_col = xlsxwriter.utility.xl_col_to_name(col_index["Views"])
+        rate_col = xlsxwriter.utility.xl_col_to_name(col_index["Engagement Rate"])
+        assets.write_formula(rix,col_index["Total Engagements"], '=IF(COUNTA(%s%d:%s%d)=0,"",SUM(%s%d:%s%d))' %
+                             (reaction_col,excel_row,save_col,excel_row,reaction_col,excel_row,save_col,excel_row), integer, total)
+        assets.write_formula(rix,col_index["Engagement Rate"], '=IF(OR(NOT(ISNUMBER(%s%d)),NOT(ISNUMBER(%s%d)),%s%d<=0),"",%s%d/%s%d)' %
+                             (total_col,excel_row,views_col,excel_row,views_col,excel_row,total_col,excel_row,views_col,excel_row), percent, er)
+        outlier_formula = '=IF(NOT(ISNUMBER(%s%d)),"",IF(COUNT($%s$2:$%s$%d)<10,"Insufficient sample",IF(%s%d>=AVERAGE($%s$2:$%s$%d)+2*STDEV.S($%s$2:$%s$%d),"High Outlier",IF(%s%d<=AVERAGE($%s$2:$%s$%d)-2*STDEV.S($%s$2:$%s$%d),"Low Outlier","Typical"))))' % (rate_col,excel_row,rate_col,rate_col,last_row+1,rate_col,excel_row,rate_col,rate_col,last_row+1,rate_col,rate_col,last_row+1,rate_col,excel_row,rate_col,rate_col,last_row+1,rate_col,rate_col,last_row+1)
         assets.write_formula(rix,col_index["Engagement Outlier"],outlier_formula,text_wrap,row.get("Engagement Outlier",""))
     if rows: assets.add_table(0,0,len(rows),len(COLUMNS)-1,{"name":"AssetsTable","style":"Table Style Medium 4","columns":[{"header":x} for x in COLUMNS]})
-    assets.set_row(0,34); assets.set_column(0,4,14); assets.set_column(5,5,38); assets.set_column(6,18,18); assets.set_column(15,17,26); assets.set_column(19,len(COLUMNS)-2,28); assets.set_column(len(COLUMNS)-1,len(COLUMNS)-1,14)
+    assets.set_row(0,46); assets.set_column(0,len(COLUMNS)-1,16); assets.set_column(col_index["Asset Link"],col_index["Asset Link"],38)
+    for name in ("Post Copy","Opening Text (Video First 2s / Static Image / Carousel Slide 1)","All Visible Text (Full Video / All Carousel Slides)","Full Spoken Transcript","Hook Description","People Description","Asset Summary","Visual Description","Visual Techniques","Custom Focus Findings"):
+        assets.set_column(col_index[name],col_index[name],32)
+    assets.set_column(col_index[OBJECT_COLUMNS[0]],col_index[OBJECT_COLUMNS[-1]],18)
+    assets.set_column(col_index["Est. Cost (USD)"],col_index["Est. Cost (USD)"],14)
     assets.conditional_format(1,col_index["Engagement Outlier"],last_row,col_index["Engagement Outlier"],{"type":"text","criteria":"containing","value":"High","format":wb.add_format({"bg_color":"#DDF3E4","font_color":green,"bold":True})})
     assets.conditional_format(1,col_index["Engagement Outlier"],last_row,col_index["Engagement Outlier"],{"type":"text","criteria":"containing","value":"Low","format":wb.add_format({"bg_color":"#FBE9E7","font_color":red,"bold":True})})
 
     tags = wb.add_worksheet("Object Tags"); tags.hide_gridlines(2); tags.freeze_panes(1,3)
-    tag_cols = ["Asset ID","Asset Link","Asset Type","Object Tag","Category","Known Engagements","Engagement Rate","View Engagement Rate","Engagement Outlier","Views","Reaction Count","Comment Count","Share Count","Save Count"]
+    tag_cols = ["Asset ID","Asset Link","Asset Type","Object Tag","Category","Total Engagements","Engagement Rate","Engagement Outlier","Views","Reaction Count","Comment Count","Share Count","Save Count"]
     for c,name in enumerate(tag_cols): tags.write(0,c,name,header)
     asset_positions = {r["Asset ID"]:i+2 for i,r in enumerate(rows)}
     for rix,row in enumerate(tag_rows,1):
         asset_excel_row = asset_positions[row["Asset ID"]]
         for c,name in enumerate(tag_cols):
             value=row.get(name,"")
-            if name in ("Asset ID","Asset Link","Asset Type","Known Engagements","Engagement Rate","View Engagement Rate","Engagement Outlier","Views","Reaction Count","Comment Count","Share Count","Save Count"):
+            if name in ("Asset ID","Asset Link","Asset Type","Total Engagements","Engagement Rate","Engagement Outlier","Views","Reaction Count","Comment Count","Share Count","Save Count"):
                 source_col = col_index.get(name)
                 if source_col is not None:
                     formula="='Assets'!%s%d" % (xlsxwriter.utility.xl_col_to_name(source_col),asset_excel_row)
-                    fmt = percent if name in ("Engagement Rate","View Engagement Rate") else (link_fmt if name=="Asset Link" else integer if name not in ("Asset ID","Asset Type","Engagement Outlier") else text_wrap)
+                    fmt = percent if name == "Engagement Rate" else (link_fmt if name=="Asset Link" else integer if name not in ("Asset ID","Asset Type","Engagement Outlier") else text_wrap)
                     tags.write_formula(rix,c,formula,fmt,value)
                     continue
             tags.write(rix,c,value,text_wrap)
     if tag_rows: tags.add_table(0,0,len(tag_rows),len(tag_cols)-1,{"name":"ObjectTagsTable","style":"Table Style Medium 4","columns":[{"header":x} for x in tag_cols]})
-    tags.set_row(0,34); tags.set_column(0,0,12); tags.set_column(1,1,38); tags.set_column(2,4,18); tags.set_column(5,5,20); tags.set_column(6,8,25); tags.set_column(9,13,18)
+    tags.set_row(0,34); tags.set_column(0,0,12); tags.set_column(1,1,38); tags.set_column(2,4,18); tags.set_column(5,5,20); tags.set_column(6,7,25); tags.set_column(8,12,18)
 
     avgs = wb.add_worksheet("Tag Averages"); avgs.hide_gridlines(2); avgs.freeze_panes(1,2)
-    stat_cols = list(tag_stats[0].keys()) if tag_stats else ["Object Tag","Category","Asset Count","Average Known Engagements","Average Engagement Rate","Average View Engagement Rate","Average Views","Average Reaction Count","Average Comment Count","Average Share Count","Average Save Count"]
+    stat_cols = list(tag_stats[0].keys()) if tag_stats else ["Object Tag","Category","Asset Count","Average Total Engagements","Average Engagement Rate","Average Views","Average Reaction Count","Average Comment Count","Average Share Count","Average Save Count"]
     for c,name in enumerate(stat_cols): avgs.write(0,c,name,header)
     tag_last = max(2,len(tag_rows)+1)
     for rix,row in enumerate(tag_stats,1):
@@ -687,7 +713,8 @@ def write_analysis_workbook(path, rows, tag_rows, tag_stats, summary):
     dash.write_row("B10",["Assets","Videos","Images","Carousels","Avg. Engagement Rate"],header)
     dash.write_number("B11",len(rows),integer); dash.write_number("C11",counts["Video"],integer); dash.write_number("D11",counts["Image"],integer); dash.write_number("E11",counts["Carousel"],integer)
     avg_er=average_numeric(rows,"Engagement Rate")
-    dash.write_formula("F11",'=IFERROR(AVERAGE(\'Assets\'!$P$2:$P$%d),"")' % (len(rows)+1),percent,avg_er if avg_er is not None else "")
+    dashboard_rate_col = xlsxwriter.utility.xl_col_to_name(col_index["Engagement Rate"])
+    dash.write_formula("F11",'=IFERROR(AVERAGE(\'Assets\'!$%s$2:$%s$%d),"")' % (dashboard_rate_col,dashboard_rate_col,len(rows)+1),percent,avg_er if avg_er is not None else "")
     dash.write("B14","Top object tags",section); dash.write_row("B15",["Object Tag","Category","Asset Count","Average Engagement Rate"],header)
     for i,row in enumerate(tag_stats[:10],15):
         dash.write(i,1,row["Object Tag"]); dash.write(i,2,row["Category"]); dash.write_number(i,3,row["Asset Count"],integer)
@@ -736,7 +763,6 @@ def run_job(jid):
             row["Asset ID"], row["Platform"], row["Asset Type"] = "A%03d" % i, platform.capitalize(), v["asset_type"]
             row["Asset Link"], row["Post Copy"], row["Post Date"] = v["url"], v["caption"], v.get("post_date","")
             row["Slide Count"] = len(v.get("image_urls",[])) if v["asset_type"] == "Carousel" else (1 if v["asset_type"] == "Image" else "")
-            row["Account Followers"] = v["followers"] if v.get("followers") is not None else ""
             row["Views"] = v["views"] if v["views"] not in (None,"") else ""
             row["Reaction Count"] = v["reactions"] if v["reactions"] not in (None,"") else ""
             row["Comment Count"] = v["comments"] if v["comments"] not in (None,"") else ""
@@ -793,8 +819,8 @@ def run_job(jid):
                         time.sleep(wait)
                 else:
                     raise last_rate_error or RuntimeError("rate limit not resolved")
-                row["Opening Text"]        = t.get("opening_text", t.get("super_first_2s",""))
-                row["All On-Screen Text"] = t.get("all_on_screen_text", t.get("super_full",""))
+                row["Opening Text (Video First 2s / Static Image / Carousel Slide 1)"] = t.get("opening_text", t.get("super_first_2s",""))
+                row["All Visible Text (Full Video / All Carousel Slides)"] = t.get("all_on_screen_text", t.get("super_full",""))
                 row["Full Spoken Transcript"] = t.get("full_spoken_transcript","")
                 row["Hook Type"]          = t.get("hook_type","")
                 row["Hook Description"]   = t.get("hook_description","")
@@ -802,15 +828,14 @@ def run_job(jid):
                 row["Number of People"]   = t.get("people_count","")
                 row["People Description"] = t.get("people_description","")
                 row["Approximate Age Range"] = t.get("approximate_age_range","")
-                row["Brand Logo Present"] = t.get("brand_logo_present","")
-                row["Brand/Logo Identified"] = t.get("brand_logo_identified","")
-                row["Logo Timing or Placement"] = t.get("logo_timing_placement","")
+                row["Brand/Logo Detected"] = t.get("brand_logo_detected", t.get("brand_logo_identified", ""))
                 row["Asset Summary"]      = t.get("asset_summary", t.get("video_summary",""))
                 row["Dominant Colors"]    = t.get("dominant_colors","")
-                row["visualDescription"]  = t.get("visual_description","")
+                row["Visual Description"] = t.get("visual_description","")
                 row["_object_tags"]       = normalize_object_tags(t.get("object_tags",t.get("visual_objects",[])))
-                row["Object Tags"]        = ", ".join(x["tag"] for x in row["_object_tags"])
-                row["visualTechniques"]   = t.get("visual_techniques","")
+                for object_col, tag in zip(OBJECT_COLUMNS, row["_object_tags"]):
+                    row[object_col] = tag["tag"]
+                row["Visual Techniques"]  = t.get("visual_techniques","")
                 row["Custom Focus Findings"] = t.get("custom_focus_findings","")
                 row["Est. Cost (USD)"]    = round(vcost,6)
                 total_cost += vcost; lines.append("%.3f" % vcost)
@@ -828,7 +853,7 @@ def run_job(jid):
         tag_rows = build_tag_rows(rows); tag_stats = build_tag_stats(tag_rows)
         dashboard = build_dashboard(rows, tag_stats, avg_er)
         summary = deterministic_summary(rows, dashboard)
-        if rows and total_cost + summary_cost_estimate(len(rows)) <= reserved:
+        if successful > 0 and total_cost + summary_cost_estimate(len(rows)) <= reserved:
             try:
                 job_update(jid, message="Writing the findings summary")
                 summary, summary_cost = generate_run_summary(rows, dashboard)
@@ -836,7 +861,6 @@ def run_job(jid):
                 job_log(jid, "wrote run summary - $%.3f" % summary_cost)
             except Exception as e:
                 job_log(jid, "AI summary unavailable; using calculated summary: %s" % str(e)[:100])
-        if rows: rows[0]["Run Findings Summary"] = summary
         fpath = os.path.join(CSV_DIR, jid + ".csv")
         with open(fpath, "w", newline="", encoding="utf-8-sig") as fh:
             w = csv.DictWriter(fh, fieldnames=COLUMNS, extrasaction="ignore"); w.writeheader(); w.writerows(rows)
@@ -912,7 +936,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .status{margin:22px 0 6px;font-size:16px;font-weight:500}
 .cost{font-size:14px;color:var(--mid)}.cost b{color:var(--ink);font-weight:600}
 .downloads{display:block}.downloads .btn{margin-top:24px}
-.findings{margin-top:30px}.summarybox{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:10px}
+.findings{margin-top:30px}.summarybox{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:10px}.summarybox ul{margin:0;padding-left:22px}.summarybox li{margin:0 0 10px}.summarybox li:last-child{margin-bottom:0}
 .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:12px}.card b{display:block;font-size:20px}.card span{font-size:12px;color:var(--mid)}
 .mini{font-size:13px}.mini th,.mini td{padding:7px 5px}.outlier-high{color:var(--green);font-weight:600}.outlier-low{color:var(--red);font-weight:600}
 .log{margin-top:16px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12.5px;color:var(--mid);white-space:pre-wrap;max-height:240px;overflow:auto}
@@ -931,7 +955,7 @@ def page(title, body, **ctx):
 
 HOME = """
 <h1>Video tagger</h1>
-<p class="lede">Paste a profile, pick how many recent posts, get a CSV and Excel report with creative analysis.</p>
+<p class="lede">Paste a profile, pick how many recent posts, and get a pivot-ready CSV with creative analysis.</p>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
 <form method="post" action="/start">
   <label for="code">Your access code</label>
@@ -945,7 +969,7 @@ HOME = """
   <input type="text" id="handle" name="handle" value="{{ f.handle }}" placeholder="@pinesol or https://www.tiktok.com/@pinesol" required>
   <label for="brand_topic">Brand or product to look for <span style="font-weight:400;color:var(--mid)">(optional)</span></label>
   <input type="text" id="brand_topic" name="brand_topic" maxlength="200" value="{{ f.brand_topic }}" placeholder="Example: Brita water filter">
-  <div class="note">If blank, brand and logo results will say “Not specified.”</div>
+  <div class="note">If blank, the app automatically identifies the strongest recognizable visible brand or logo.</div>
   <label for="focus">Custom analysis focus <span style="font-weight:400;color:var(--mid)">(optional)</span></label>
   <textarea id="focus" name="focus" maxlength="1000" placeholder="Example: Focus on how the product benefit is demonstrated and whether the hook feels credible.">{{ f.focus }}</textarea>
   <div class="note">The standard analysis always runs. This adds a Custom Focus Findings column. Maximum 1,000 characters.</div>
@@ -983,7 +1007,8 @@ function pct(v){return typeof v==='number'?(100*v).toFixed(2)+'%':'Unavailable';
 function addEl(parent,tag,text,cls){var e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;parent.appendChild(e);return e;}
 function renderFindings(s){
   if(!s||!s.summary)return; var d={};try{d=typeof s.dashboard_json==='string'?JSON.parse(s.dashboard_json||'{}'):(s.dashboard_json||{});}catch(e){}
-  findings.hidden=false;findings.textContent='';addEl(findings,'h2','Run findings');addEl(findings,'div',s.summary,'summarybox');
+  findings.hidden=false;findings.textContent='';addEl(findings,'h2','Run findings');var box=addEl(findings,'div',undefined,'summarybox'),ul=addEl(box,'ul');
+  String(s.summary).split(/\\r?\\n/).map(function(x){return x.replace(/^\\s*[\\u2022*-]\\s*/, '').trim();}).filter(Boolean).forEach(function(x){addEl(ul,'li',x);});
   var cards=addEl(findings,'div',undefined,'cards'), counts=d.counts||{};
   [['Assets',d.asset_count||0],['Videos',counts.Video||0],['Images',counts.Image||0],['Carousels',counts.Carousel||0],['Avg. engagement',pct(d.average_engagement_rate)]].forEach(function(x){var c=addEl(cards,'div',undefined,'card');addEl(c,'b',String(x[1]));addEl(c,'span',x[0]);});
   if((d.top_tags||[]).length){addEl(findings,'h3','Top object tags');var t=addEl(findings,'table',undefined,'mini'),tr=t.insertRow();['Object tag','Category','Assets','Avg. engagement'].forEach(function(x){addEl(tr,'th',x);});(d.top_tags||[]).forEach(function(x){var r=t.insertRow();[x.tag,x.category,String(x.count),pct(x.average_engagement_rate)].forEach(function(v){addEl(r,'td',v);});});}
