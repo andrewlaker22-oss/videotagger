@@ -91,6 +91,7 @@ Web, news, Reddit, and X research is not enabled in this build.
 - **"model not found"** → change `GEMINI_MODEL` in Variables to the current flash model (ai.google.dev/gemini-api/docs/models).
 - **A public YouTube video is skipped** → confirm the video is public, not private or unlisted. Then check that `GEMINI_MODEL` still supports direct YouTube URL input.
 - **Media skipped on Instagram/Facebook** → those platforms sometimes block temporary media downloads or return an expired image URL. Running it again often refreshes the URLs.
+- **TikTok says no assets** → use either `@username` or the full profile URL. The app removes browser suffixes such as `?lang=en` automatically and logs Apify's exact error code when a profile is private, missing, empty, or temporarily blocked.
 - **Codes disappeared** → you skipped step 3 (volume).
 - **Logs** → Railway service → Deployments → View logs. Every skipped video says why.
 

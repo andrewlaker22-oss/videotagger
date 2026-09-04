@@ -208,16 +208,17 @@ def _append_media_url(urls, value):
     elif isinstance(value, list):
         for v in value: _append_media_url(urls, v)
     elif isinstance(value, dict):
-        preferred = [key for key in ("displayUrl","imageUrl","thumbnailUrl","urlList") if key in value]
+        preferred = next((key for key in ("downloadLink","displayUrl","imageUrl","thumbnailUrl","urlList","tiktokLink")
+                          if value.get(key) not in (None, "", [])), None)
         nested = [key for key in ("image","photo_image","imageURL","thumbnail","previewImage") if key in value]
-        chosen = preferred or nested or [key for key in ("uri","src","url") if key in value]
+        chosen = ([preferred] if preferred else nested) or [key for key in ("uri","src","url") if key in value]
         for key in chosen: _append_media_url(urls, value[key])
 
 def extract_image_urls(it):
     urls = []
     for key in ("displayUrl","imageUrl","thumbnailUrl","image","photoUrl"):
         _append_media_url(urls, it.get(key))
-    for key in ("childPosts","sidecarChildren","carouselMedia","images","media","attachments"):
+    for key in ("childPosts","sidecarChildren","carouselMedia","images","media","attachments","slideshowImageLinks"):
         _append_media_url(urls, it.get(key))
     _append_media_url(urls, get_path(it, "imagePost.images"))
     # Exclude common profile/avatar URLs that can appear inside nested media metadata.
@@ -226,23 +227,53 @@ def extract_image_urls(it):
 
 def detect_asset_type(platform, it, image_urls):
     if platform == "youtube": return "Video"
+    if it.get("isSlideshow") is True:
+        return "Carousel" if len(image_urls) > 1 else "Image"
     words = " ".join(str(it.get(k, "")) for k in ("type","productType","mediaType","contentType")).lower()
     if any(x in words for x in ("sidecar","carousel","album","slideshow")) or len(image_urls) > 1:
         return "Carousel"
-    if any(x in words for x in ("video","reel","clip","igtv")) or any(it.get(k) for k in ("videoUrl","videoPlayCount","isVideo")):
+    if any(x in words for x in ("video","reel","clip","igtv")) or any(it.get(k) for k in ("videoUrl","webVideoUrl","videoPlayCount","isVideo","videoMeta","mediaUrls")):
         return "Video"
     media = it.get("media") or []
     if any("video" in str(m.get("__typename", "")).lower() for m in media if isinstance(m, dict)):
         return "Video"
     return "Image"
 
+def profile_username(handle, platform):
+    """Turn a pasted profile URL or @handle into a clean username.
+
+    Social profile links copied from browsers commonly include query strings such as
+    ``?lang=en``. Passing that suffix to an Apify Actor makes it part of the username.
+    """
+    h = str(handle or "").strip()
+    if platform == "tiktok":
+        match = re.search(r"(?:tiktok\.com/(?:[^?#]*/)?@|^@)([A-Za-z0-9._]+)", h, re.I)
+        if match:
+            return match.group(1)
+        candidate = re.split(r"[?#]", h, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1].lstrip("@")
+        match = re.fullmatch(r"[A-Za-z0-9._]+", candidate)
+        if not match:
+            raise ValueError("That does not look like a valid TikTok profile URL or username.")
+        return candidate
+    if platform == "instagram":
+        match = re.search(r"(?:instagram\.com/|^@)([A-Za-z0-9._]+)", h, re.I)
+        if match:
+            return match.group(1)
+        candidate = re.split(r"[?#]", h, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1].lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9._]+", candidate):
+            raise ValueError("That does not look like a valid Instagram profile URL or username.")
+        return candidate
+    return h
+
 def apify_input(platform, handle, n):
     h = handle.strip()
     if platform == "tiktok":
-        p = h.replace("https://www.tiktok.com/@","").replace("@","").strip("/")
-        return {"profiles":[p], "resultsPerPage":n, "shouldDownloadVideos":False}
+        p = profile_username(h, platform)
+        return {"profiles":[p], "profileScrapeSections":["videos"], "profileSorting":"latest",
+                "resultsPerPage":n, "shouldDownloadVideos":False,
+                "shouldDownloadSlideshowImages":True, "shouldDownloadAvatars":False}
     if platform == "instagram":
-        u = h.replace("https://www.instagram.com/","").replace("http://www.instagram.com/","").replace("@","").strip("/")
+        u = profile_username(h, platform)
         return {"directUrls":["https://www.instagram.com/"+u+"/"], "resultsLimit":n, "resultsType":"posts", "addParentData":True}
     if platform == "youtube":
         url = h if h.startswith("http") else "https://www.youtube.com/@"+h.lstrip("@")
@@ -266,6 +297,11 @@ def scrape_profile(jid, platform, handle, n):
     apify_cost = len(items) * PRICE["apify_per_result"][platform]
     out, seen = [], set()
     for it in items:
+        if it.get("errorCode") or it.get("error"):
+            detail = str(it.get("error") or "The source could not return this profile.")
+            code = str(it.get("errorCode") or "SOURCE_ERROR")
+            job_log(jid, "Apify source error: %s (%s)" % (detail[:160], code[:60]))
+            continue
         url = first_of(it, ["url","postUrl","webVideoUrl","webpage_url","link","permalink","videoUrl"])
         if not url or url in seen: continue
         seen.add(url)
@@ -283,9 +319,9 @@ def scrape_profile(jid, platform, handle, n):
                     "followers":number_value(first_path(it,["owner.followersCount","owner.followerCount","authorMeta.fans","authorMeta.followers",
                                                               "author.followersCount","parentData.followersCount","pageFollowers","followersCount",
                                                               "subscriberCount","channelSubscribers"])),
-                    "post_date":first_of(it,["timestamp","takenAtIso","publishedAt","uploadDate","date","time","createTime"],""),
+                    "post_date":first_of(it,["timestamp","takenAtIso","publishedAt","uploadDate","date","time","createTimeISO","createTime"],""),
                     "caption":cap or "",
-                    "duration":first_of(it,["durationSeconds","duration","lengthSeconds","length"], None)})
+                    "duration":first_path(it,["durationSeconds","duration","videoMeta.duration","lengthSeconds","length"], None)})
         if len(out) >= n: break
     known_followers = next((x["followers"] for x in out if x.get("followers") is not None), None)
     if known_followers is not None:
@@ -875,7 +911,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .fill{height:100%;width:0;background:var(--yellow);transition:width .4s}
 .status{margin:22px 0 6px;font-size:16px;font-weight:500}
 .cost{font-size:14px;color:var(--mid)}.cost b{color:var(--ink);font-weight:600}
-.downloads{display:grid;grid-template-columns:1fr 1fr;gap:12px}.downloads .btn{margin-top:24px}
+.downloads{display:block}.downloads .btn{margin-top:24px}
 .findings{margin-top:30px}.summarybox{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:10px}
 .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:12px}.card b{display:block;font-size:20px}.card span{font-size:12px;color:var(--mid)}
 .mini{font-size:13px}.mini th,.mini td{padding:7px 5px}.outlier-high{color:var(--green);font-weight:600}.outlier-low{color:var(--red);font-weight:600}
@@ -886,7 +922,7 @@ th{font-weight:500;color:var(--mid)}
 code{font-weight:600}
 .row2{display:flex;gap:10px}.row2>*{flex:1}
 a{color:var(--ink)}
-@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}.downloads{grid-template-columns:1fr}}
+@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}}
 @media (prefers-reduced-motion:reduce){.fill{transition:none}}
 </style></head><body><main>{{ body|safe }}</main></body></html>"""
 
@@ -939,7 +975,7 @@ JOB = """
 <div class="cost">Cost so far <b id="cost">${{ '%.2f'|format(j.cost or 0) }}</b> <span id="lines"></span></div>
 <div class="note">You can close this tab. This link keeps your progress: <a href="{{ request.url }}">{{ request.url }}</a></div>
 <div id="findings" class="findings" hidden></div>
-<div id="dl" class="downloads">{% if j.status=='done' %}<a class="btn" href="/download/{{ j.id }}">Download Raw CSV</a><a class="btn green" href="/download-xlsx/{{ j.id }}">Download Excel Analysis Report</a>{% endif %}</div>
+<div id="dl" class="downloads">{% if j.status=='done' %}<a class="btn" href="/download/{{ j.id }}">Download Raw CSV</a>{% endif %}</div>
 {% if j.status=='failed' %}<a class="btn" href="/">Start over</a>{% endif %}
 <div class="log" id="log">{{ j.log }}</div>
 <script>
@@ -962,7 +998,7 @@ var polls=0, t=setInterval(function(){
     var p=tot?Math.round(100*s.processed/tot):0; fill.style.width=p+'%'; pct.textContent=p+'%';
     msg.textContent=s.message; cost.textContent='$'+(s.cost||0).toFixed(2);
     lines.textContent=s.cost_lines?('= '+s.cost_lines):''; log.textContent=s.log; log.scrollTop=1e9;
-    if(s.status==='done'){dl.innerHTML='<a class="btn" href="/download/'+s.id+'">Download Raw CSV</a><a class="btn green" href="/download-xlsx/'+s.id+'">Download Excel Analysis Report</a>';renderFindings(s);h.textContent='Done';clearInterval(t);}
+    if(s.status==='done'){dl.innerHTML='<a class="btn" href="/download/'+s.id+'">Download Raw CSV</a>';renderFindings(s);h.textContent='Done';clearInterval(t);}
     if(s.status==='failed'){h.textContent='Stopped';clearInterval(t);}
   }).catch(function(){});
 },2500);
