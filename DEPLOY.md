@@ -53,17 +53,32 @@ TikTok, Instagram, and Facebook still use yt-dlp to download a temporary video f
 
 ## 6. Make access codes
 - Open `https://YOUR-URL/admin`, enter your `ADMIN_CODE`.
-- Type a person's name → **Create code**. They get a code like `VT-7K2M4Q` with 100 videos.
+- Type a person's name → **Create code**. They get a code like `VT-7K2M4Q` with 100 assets.
 - Send them the link + their code. Top up from the same page when they run out.
 
 ## Cost, roughly
 - Railway: ~$5/mo on the Hobby plan.
 - Apify: a few cents per profile pull.
-- Gemini: most of the spend. Only videos up to 60 seconds are analyzed. The 100-per-code bucket, 50-per-run cap, and rolling $10/day, $70/week, and $280/month safety limits are the app-level ceiling.
+- Gemini: most of the spend. Only videos up to 60 seconds and the first 10 slides of a carousel are analyzed. The 100-per-code bucket, 50-per-run cap, and rolling $10/day, $70/week, and $280/month safety limits are the app-level ceiling.
 
-## CSV analysis fields
+## Results and analysis fields
 
-The standard analysis always runs. It includes the opening hook, people/count/visible age range, specified-brand logo presence and timing, whole-video summary, dominant colors, visual details, all on-screen supers, and a clean spoken transcript. Public engagement counts are included when the platform exposes them.
+The selected count means the most recent posts total, including videos, single images, and carousels. Each carousel is one asset. The standard analysis includes the opening hook, people/count/visible age range, specified-brand logo presence and timing, asset summary, dominant colors, visual details, on-screen text, a clean spoken transcript for videos, and up to 15 normalized object tags.
+
+The finished page displays an AI-written findings summary, counts by asset type, average follower-based engagement rate, top object tags with averages, and clickable high/low outliers. The AI summary is also written in the first row of the raw CSV.
+
+Two files are available after each run:
+
+- Raw CSV: one row per asset with public engagement counts and all analysis fields.
+- Excel Analysis Report: `Summary`, `Assets`, `Object Tags`, and `Tag Averages` sheets. The normalized Object Tags sheet has one row per asset/tag combination, so tags such as `burrito bowl` can be filtered and averaged without splitting comma-separated text.
+
+Engagement calculations:
+
+- Known Engagements = reactions + comments + shares + saves, using only publicly available fields.
+- Engagement Rate = Known Engagements / Account Followers.
+- View Engagement Rate = Known Engagements / Views. When views are unavailable the cell says `No public views available`.
+- Shares and saves remain blank when a platform does not expose them; blank does not mean zero.
+- With at least 10 comparable follower-based rates, High Outlier is at least two sample standard deviations above the run mean and Low Outlier is at least two below it. All asset types in the current run are compared together.
 
 The home page also has two optional fields:
 
@@ -75,7 +90,7 @@ Web, news, Reddit, and X research is not enabled in this build.
 ## If something breaks
 - **"model not found"** → change `GEMINI_MODEL` in Variables to the current flash model (ai.google.dev/gemini-api/docs/models).
 - **A public YouTube video is skipped** → confirm the video is public, not private or unlisted. Then check that `GEMINI_MODEL` still supports direct YouTube URL input.
-- **Videos all skipped on Instagram/Facebook** → those platforms sometimes block downloads for a bit.
+- **Media skipped on Instagram/Facebook** → those platforms sometimes block temporary media downloads or return an expired image URL. Running it again often refreshes the URLs.
 - **Codes disappeared** → you skipped step 3 (volume).
 - **Logs** → Railway service → Deployments → View logs. Every skipped video says why.
 

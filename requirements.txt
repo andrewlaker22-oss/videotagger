@@ -3,3 +3,4 @@ gunicorn>=21
 apify-client>=1.7
 google-genai>=2.22.0,<3
 yt-dlp>=2026.8.19
+XlsxWriter>=3.2
