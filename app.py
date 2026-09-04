@@ -201,7 +201,23 @@ GEMINI_PROMPT = """You are analyzing a single short-form social video. Return ON
 Rules: super_first_2s is the FIRST TWO SECONDS ONLY, never merged with later text. Do not invent text; if unreadable, use an empty string. Valid JSON only."""
 
 def gemini_tag(path, duration_s):
-    """Returns (tags dict, cost usd). Uses Gemini's actual billed tokens when reported."""
+    """Returns (tags dict, cost usd). Uses Gemini's actual billed tokens when reported.
+    Retries on 429 (rate limit), reading the retryDelay Google returns in the error."""
+    import re as _re
+    last = None
+    for attempt in range(3):
+        try:
+            return _gemini_tag_once(path, duration_s)
+        except Exception as e:
+            msg = str(e); last = e
+            if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg:
+                raise
+            m = _re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+)", msg)
+            wait = min(int(m.group(1)) + 2, 90) if m else 30
+            time.sleep(wait)
+    raise last
+
+def _gemini_tag_once(path, duration_s):
     from google import genai
     client = genai.Client(api_key=GEMINI_API_KEY)
     f = client.files.upload(file=path)
@@ -263,7 +279,23 @@ def run_job(jid):
                 if row["Views"] == "" and yv is not None: row["Views"] = yv
                 if not row["Post Copy"] and yd: row["Post Copy"] = yd
                 if not path: raise RuntimeError("download produced no file")
-                t, vcost = gemini_tag(path, dur)
+                # inline retry with visible waits so the log shows what's happening
+                import re as _re
+                for attempt in range(3):
+                    try:
+                        t, vcost = _gemini_tag_once(path, dur)
+                        break
+                    except Exception as e:
+                        msg = str(e)
+                        if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg:
+                            raise
+                        m = _re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+)", msg)
+                        wait = min(int(m.group(1)) + 2, 90) if m else 30
+                        job_log(jid, "rate limited, waiting %ds then retrying video %d" % (wait, i))
+                        job_update(jid, message="Rate limited, waiting %ds..." % wait)
+                        time.sleep(wait)
+                else:
+                    raise last if 'last' in dir() else RuntimeError("rate limit not resolved")
                 row["Super (First 2s)"]   = t.get("super_first_2s","")
                 row["Super (Full Video)"] = t.get("super_full","")
                 row["adDescription"]      = t.get("ad_description","")
