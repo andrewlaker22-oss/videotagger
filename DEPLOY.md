@@ -25,8 +25,22 @@ Service → **Variables** → add these:
 | `ADMIN_CODE` | make one up, this opens `/admin` (e.g. a long random phrase) |
 | `SECRET_KEY` | any long random string (signs the admin login cookie) |
 | `GEMINI_MODEL` | optional, defaults to `gemini-3.7-flash` |
+| `DAILY_CAP_USD` | optional, defaults to `10.00` across all users in a rolling 24-hour window |
+| `WEEKLY_CAP_USD` | optional, defaults to `70.00` in a rolling 7-day window |
+| `MONTHLY_CAP_USD` | optional, defaults to `280.00` in a rolling 30-day window |
+| `MAX_VIDEO_SECONDS` | optional, defaults to `60`; longer videos are skipped before Gemini |
 
 Railway redeploys automatically after you save variables.
+
+## 4a. Add the independent provider safety barrier
+
+The limits above are enforced by the app. Also turn on provider-level limits so a bug in the app cannot create an open-ended bill:
+
+- Google Cloud / AI Studio: use a dedicated project for this app and create a Gemini API spend cap budget. Set the provider cap slightly below your true maximum because in-flight requests can finish while a cap is being enforced.
+- Apify: Billing -> Limits -> Custom usage limit. Disable overage or set the lowest practical limit for your plan.
+- Railway: Workspace Usage -> Set Usage Limits -> Compute hard limit. Railway's documented minimum hard limit is $10.
+
+These provider controls are independent of the app's rolling $10 / $70 / $280 checks.
 
 ### How YouTube works
 
@@ -45,12 +59,23 @@ TikTok, Instagram, and Facebook still use yt-dlp to download a temporary video f
 ## Cost, roughly
 - Railway: ~$5/mo on the Hobby plan.
 - Apify: a few cents per profile pull.
-- Gemini: most of the spend. Short social videos run a few cents each; a full 50-video run is usually under a dollar or two. The 100-per-code bucket and 50-per-run cap are your ceiling.
+- Gemini: most of the spend. Only videos up to 60 seconds are analyzed. The 100-per-code bucket, 50-per-run cap, and rolling $10/day, $70/week, and $280/month safety limits are the app-level ceiling.
+
+## CSV analysis fields
+
+The standard analysis always runs. It includes the opening hook, people/count/visible age range, specified-brand logo presence and timing, whole-video summary, dominant colors, visual details, all on-screen supers, and a clean spoken transcript. Public engagement counts are included when the platform exposes them.
+
+The home page also has two optional fields:
+
+- Brand or product to look for. If blank, brand/logo fields say `Not specified`.
+- Custom analysis focus. This is capped at 1,000 characters and adds a `Custom Focus Findings` CSV column without replacing the standard analysis.
+
+Web, news, Reddit, and X research is not enabled in this build.
 
 ## If something breaks
 - **"model not found"** → change `GEMINI_MODEL` in Variables to the current flash model (ai.google.dev/gemini-api/docs/models).
 - **A public YouTube video is skipped** → confirm the video is public, not private or unlisted. Then check that `GEMINI_MODEL` still supports direct YouTube URL input.
-- **Videos all skipped on Instagram/Facebook** → those platforms sometimes block downloads for a bit. Their download settings are unchanged by the YouTube fix.
+- **Videos all skipped on Instagram/Facebook** → those platforms sometimes block downloads for a bit.
 - **Codes disappeared** → you skipped step 3 (volume).
 - **Logs** → Railway service → Deployments → View logs. Every skipped video says why.
 
