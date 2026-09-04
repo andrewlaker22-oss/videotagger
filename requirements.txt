@@ -1,5 +1,5 @@
 flask>=3.0
 gunicorn>=21
 apify-client>=1.7
-google-genai>=1.0
-yt-dlp[default]>=2026.8.19
+google-genai>=2.22.0,<3
+yt-dlp>=2026.8.19

@@ -15,11 +15,9 @@ ENV VARS (set on the host, never in code):
   GEMINI_MODEL     optional, default gemini-3.7-flash (half the price of 3.5-flash, same video support)
   DAILY_CAP_USD    optional, default 5.00 - total estimated API spend allowed per day, all users
   DATA_DIR         optional, default /data (attach a Railway volume here)
-  YTDLP_PROXY      optional, proxy URL used for YouTube downloads only
-  YTDLP_COOKIES_B64 optional, base64-encoded Netscape cookies.txt used for YouTube only
 """
 
-import os, csv, json, time, uuid, shutil, sqlite3, secrets, tempfile, threading, traceback, queue, base64
+import os, csv, json, time, uuid, shutil, sqlite3, secrets, tempfile, threading, traceback, queue
 from datetime import datetime, timedelta, date
 from flask import (Flask, request, redirect, url_for, session, jsonify,
                    send_file, render_template_string, abort)
@@ -32,8 +30,6 @@ SECRET_KEY     = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-3.7-flash")
 DAILY_CAP_USD  = float(os.environ.get("DAILY_CAP_USD", "5.00"))
 DATA_DIR       = os.environ.get("DATA_DIR", "/data" if os.path.isdir("/data") else os.path.join(os.getcwd(), "data"))
-YTDLP_PROXY    = os.environ.get("YTDLP_PROXY", "").strip()
-YTDLP_COOKIES_B64 = os.environ.get("YTDLP_COOKIES_B64", "").strip()
 os.makedirs(DATA_DIR, exist_ok=True)
 CSV_DIR = os.path.join(DATA_DIR, "csv"); os.makedirs(CSV_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "app.db")
@@ -44,9 +40,6 @@ CSV_KEEP_HOURS   = 24
 GEMINI_POLL_MAX  = 60
 OVERFETCH        = 3        # ask Apify for 3x posts so after dropping photos we still get N videos
 OVERFETCH_CAP    = 150
-
-_YOUTUBE_COOKIEFILE = None
-_YOUTUBE_COOKIE_LOCK = threading.Lock()
 
 # ---- pricing (USD). Update here if rates change.
 # Sources: ai.google.dev/gemini-api/docs/pricing, and each actor's Apify store page.
@@ -176,69 +169,37 @@ def scrape_profile(jid, platform, handle, n):
         if isinstance(cap, dict): cap = cap.get("text","")
         out.append({"url":url,
                     "views":first_of(it,["playCount","views","viewCount","videoViewCount","videoPlayCount","play_count","view_count"]),
-                    "caption":cap or ""})
+                    "caption":cap or "",
+                    "duration":first_of(it,["durationSeconds","duration","lengthSeconds","length"], 30)})
         if len(out) >= n: break
     job_log(jid, "Apify returned %d posts - kept %d videos, dropped %d photos/carousels - $%.3f"
             % (len(items), len(out), dropped, apify_cost))
     return out, apify_cost
 
-def youtube_cookiefile():
-    """Decode the Railway cookie secret once into a private, container-local file."""
-    global _YOUTUBE_COOKIEFILE
-    if not YTDLP_COOKIES_B64:
-        return None
-    with _YOUTUBE_COOKIE_LOCK:
-        if _YOUTUBE_COOKIEFILE and os.path.exists(_YOUTUBE_COOKIEFILE):
-            return _YOUTUBE_COOKIEFILE
-        try:
-            raw = base64.b64decode("".join(YTDLP_COOKIES_B64.split()), validate=True)
-        except Exception as e:
-            raise RuntimeError("YTDLP_COOKIES_B64 is not valid base64") from e
-        raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        first_line = raw.split(b"\n", 1)[0].strip()
-        if first_line not in (b"# HTTP Cookie File", b"# Netscape HTTP Cookie File"):
-            raise RuntimeError("YTDLP_COOKIES_B64 must contain a Netscape cookies.txt file")
-        fd, path = tempfile.mkstemp(prefix="vt_youtube_", suffix=".txt")
-        try:
-            os.chmod(path, 0o600)
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(raw)
-        except Exception:
-            try: os.close(fd)
-            except Exception: pass
-            try: os.remove(path)
-            except Exception: pass
-            raise
-        _YOUTUBE_COOKIEFILE = path
-        return path
+def duration_seconds(value, default=30):
+    if isinstance(value, (int, float)):
+        return max(1, float(value))
+    try:
+        parts = [float(p) for p in str(value).strip().split(":")]
+        if 1 <= len(parts) <= 3:
+            total = 0
+            for part in parts: total = total * 60 + part
+            return max(1, total)
+    except Exception:
+        pass
+    return default
 
-def download_video(url, workdir, platform):
+def download_video(url, workdir):
     import yt_dlp
     opts = {"outtmpl": os.path.join(workdir,"vid.%(ext)s"), "format":"mp4/best[ext=mp4]/best",
             "format_sort":["res:720"], "quiet":True, "no_warnings":True, "noprogress":True}
-    if platform == "youtube":
-        # Railway egress IPs are commonly challenged by YouTube. Keep the
-        # workaround YouTube-only so cookies/proxies never reach other sites.
-        opts.update({"retries":3, "extractor_retries":3, "fragment_retries":3,
-                     "sleep_interval_requests":1})
-        cookiefile = youtube_cookiefile()
-        if cookiefile: opts["cookiefile"] = cookiefile
-        if YTDLP_PROXY: opts["proxy"] = YTDLP_PROXY
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(info)
-            if not os.path.exists(path):
-                fs = [os.path.join(workdir,f) for f in os.listdir(workdir) if os.path.isfile(os.path.join(workdir,f))]
-                path = max(fs, key=os.path.getsize) if fs else None
-            return path, info.get("view_count"), (info.get("description") or info.get("title") or ""), (info.get("duration") or 30)
-    except Exception as e:
-        msg = str(e)
-        if platform == "youtube" and ("Sign in to confirm" in msg or "not a bot" in msg):
-            if YTDLP_PROXY or YTDLP_COOKIES_B64:
-                raise RuntimeError("YouTube rejected the configured session/IP. Refresh the cookies through the same proxy; see DEPLOY.md") from e
-            raise RuntimeError("YouTube challenged Railway's IP. Configure YTDLP_PROXY and YTDLP_COOKIES_B64; see DEPLOY.md") from e
-        raise
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        path = ydl.prepare_filename(info)
+        if not os.path.exists(path):
+            fs = [os.path.join(workdir,f) for f in os.listdir(workdir) if os.path.isfile(os.path.join(workdir,f))]
+            path = max(fs, key=os.path.getsize) if fs else None
+        return path, info.get("view_count"), (info.get("description") or info.get("title") or ""), (info.get("duration") or 30)
 
 GEMINI_PROMPT = """You are analyzing a single short-form social video. Return ONLY a JSON object, no prose, no markdown fences.
 
@@ -282,6 +243,23 @@ def _gemini_tag_once(path, duration_s):
         if tries > GEMINI_POLL_MAX: raise TimeoutError("Gemini processing timed out")
         time.sleep(3); f = client.files.get(name=f.name)
     resp = client.models.generate_content(model=GEMINI_MODEL, contents=[f, GEMINI_PROMPT])
+    try: client.files.delete(name=f.name)
+    except Exception: pass
+    return _gemini_result(resp, duration_s)
+
+def _gemini_tag_youtube_once(url, duration_s):
+    """Analyze a public YouTube URL in Gemini without downloading it on Railway."""
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    content = types.Content(parts=[
+        types.Part(file_data=types.FileData(file_uri=url)),
+        types.Part(text=GEMINI_PROMPT),
+    ])
+    resp = client.models.generate_content(model=GEMINI_MODEL, contents=content)
+    return _gemini_result(resp, duration_s)
+
+def _gemini_result(resp, duration_s):
     um = getattr(resp, "usage_metadata", None)
     tin  = getattr(um, "prompt_token_count", None) if um else None
     tout = getattr(um, "candidates_token_count", None) if um else None
@@ -290,8 +268,6 @@ def _gemini_tag_once(path, duration_s):
     txt = (resp.text or "").strip().replace("```json","").replace("```","")
     try: data = json.loads(txt[txt.find("{"):txt.rfind("}")+1])
     except Exception: data = {"visual_description": txt[:400]}
-    try: client.files.delete(name=f.name)
-    except Exception: pass
     return data, cost
 
 # ---------------- worker ----------------
@@ -313,6 +289,8 @@ def run_job(jid):
                        message="No videos found. Check the handle and that the profile is public.",
                        finished=datetime.now().isoformat())
             return
+        if platform == "youtube":
+            job_log(jid, "Using Gemini direct YouTube URL input (no yt-dlp download)")
         job_update(jid, total=len(vids), message="Tagging 1 of %d" % len(vids),
                    cost=total_cost, cost_lines=" + ".join(lines))
         rows, stopped_early = [], False
@@ -328,18 +306,25 @@ def run_job(jid):
             row["Views"] = v["views"] if v["views"] not in (None,"") else ""
             wd = tempfile.mkdtemp(prefix="vt_")
             try:
-                path, yv, yd, dur = download_video(v["url"], wd, platform)
-                if row["Views"] == "" and yv is not None: row["Views"] = yv
-                if not row["Post Copy"] and yd: row["Post Copy"] = yd
-                if not path: raise RuntimeError("download produced no file")
+                dur = duration_seconds(v.get("duration"), 30)
+                path = None
+                if platform != "youtube":
+                    path, yv, yd, dur = download_video(v["url"], wd)
+                    if row["Views"] == "" and yv is not None: row["Views"] = yv
+                    if not row["Post Copy"] and yd: row["Post Copy"] = yd
+                    if not path: raise RuntimeError("download produced no file")
                 # inline retry with visible waits so the log shows what's happening
                 import re as _re
+                last_rate_error = None
                 for attempt in range(3):
                     try:
-                        t, vcost = _gemini_tag_once(path, dur)
+                        if platform == "youtube":
+                            t, vcost = _gemini_tag_youtube_once(v["url"], dur)
+                        else:
+                            t, vcost = _gemini_tag_once(path, dur)
                         break
                     except Exception as e:
-                        msg = str(e)
+                        msg = str(e); last_rate_error = e
                         if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg:
                             raise
                         m = _re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+)", msg)
@@ -348,7 +333,7 @@ def run_job(jid):
                         job_update(jid, message="Rate limited, waiting %ds..." % wait)
                         time.sleep(wait)
                 else:
-                    raise last if 'last' in dir() else RuntimeError("rate limit not resolved")
+                    raise last_rate_error or RuntimeError("rate limit not resolved")
                 row["Super (First 2s)"]   = t.get("super_first_2s","")
                 row["Super (Full Video)"] = t.get("super_full","")
                 row["adDescription"]      = t.get("ad_description","")
