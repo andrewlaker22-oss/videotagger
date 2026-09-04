@@ -15,9 +15,11 @@ ENV VARS (set on the host, never in code):
   GEMINI_MODEL     optional, default gemini-3.7-flash (half the price of 3.5-flash, same video support)
   DAILY_CAP_USD    optional, default 5.00 - total estimated API spend allowed per day, all users
   DATA_DIR         optional, default /data (attach a Railway volume here)
+  YTDLP_PROXY      optional, proxy URL used for YouTube downloads only
+  YTDLP_COOKIES_B64 optional, base64-encoded Netscape cookies.txt used for YouTube only
 """
 
-import os, csv, json, time, uuid, shutil, sqlite3, secrets, tempfile, threading, traceback, queue
+import os, csv, json, time, uuid, shutil, sqlite3, secrets, tempfile, threading, traceback, queue, base64
 from datetime import datetime, timedelta, date
 from flask import (Flask, request, redirect, url_for, session, jsonify,
                    send_file, render_template_string, abort)
@@ -30,6 +32,8 @@ SECRET_KEY     = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-3.7-flash")
 DAILY_CAP_USD  = float(os.environ.get("DAILY_CAP_USD", "5.00"))
 DATA_DIR       = os.environ.get("DATA_DIR", "/data" if os.path.isdir("/data") else os.path.join(os.getcwd(), "data"))
+YTDLP_PROXY    = os.environ.get("YTDLP_PROXY", "").strip()
+YTDLP_COOKIES_B64 = os.environ.get("YTDLP_COOKIES_B64", "").strip()
 os.makedirs(DATA_DIR, exist_ok=True)
 CSV_DIR = os.path.join(DATA_DIR, "csv"); os.makedirs(CSV_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "app.db")
@@ -40,6 +44,9 @@ CSV_KEEP_HOURS   = 24
 GEMINI_POLL_MAX  = 60
 OVERFETCH        = 3        # ask Apify for 3x posts so after dropping photos we still get N videos
 OVERFETCH_CAP    = 150
+
+_YOUTUBE_COOKIEFILE = None
+_YOUTUBE_COOKIE_LOCK = threading.Lock()
 
 # ---- pricing (USD). Update here if rates change.
 # Sources: ai.google.dev/gemini-api/docs/pricing, and each actor's Apify store page.
@@ -175,17 +182,63 @@ def scrape_profile(jid, platform, handle, n):
             % (len(items), len(out), dropped, apify_cost))
     return out, apify_cost
 
-def download_video(url, workdir):
+def youtube_cookiefile():
+    """Decode the Railway cookie secret once into a private, container-local file."""
+    global _YOUTUBE_COOKIEFILE
+    if not YTDLP_COOKIES_B64:
+        return None
+    with _YOUTUBE_COOKIE_LOCK:
+        if _YOUTUBE_COOKIEFILE and os.path.exists(_YOUTUBE_COOKIEFILE):
+            return _YOUTUBE_COOKIEFILE
+        try:
+            raw = base64.b64decode("".join(YTDLP_COOKIES_B64.split()), validate=True)
+        except Exception as e:
+            raise RuntimeError("YTDLP_COOKIES_B64 is not valid base64") from e
+        raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        first_line = raw.split(b"\n", 1)[0].strip()
+        if first_line not in (b"# HTTP Cookie File", b"# Netscape HTTP Cookie File"):
+            raise RuntimeError("YTDLP_COOKIES_B64 must contain a Netscape cookies.txt file")
+        fd, path = tempfile.mkstemp(prefix="vt_youtube_", suffix=".txt")
+        try:
+            os.chmod(path, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(raw)
+        except Exception:
+            try: os.close(fd)
+            except Exception: pass
+            try: os.remove(path)
+            except Exception: pass
+            raise
+        _YOUTUBE_COOKIEFILE = path
+        return path
+
+def download_video(url, workdir, platform):
     import yt_dlp
     opts = {"outtmpl": os.path.join(workdir,"vid.%(ext)s"), "format":"mp4/best[ext=mp4]/best",
             "format_sort":["res:720"], "quiet":True, "no_warnings":True, "noprogress":True}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        path = ydl.prepare_filename(info)
-        if not os.path.exists(path):
-            fs = [os.path.join(workdir,f) for f in os.listdir(workdir) if os.path.isfile(os.path.join(workdir,f))]
-            path = max(fs, key=os.path.getsize) if fs else None
-        return path, info.get("view_count"), (info.get("description") or info.get("title") or ""), (info.get("duration") or 30)
+    if platform == "youtube":
+        # Railway egress IPs are commonly challenged by YouTube. Keep the
+        # workaround YouTube-only so cookies/proxies never reach other sites.
+        opts.update({"retries":3, "extractor_retries":3, "fragment_retries":3,
+                     "sleep_interval_requests":1})
+        cookiefile = youtube_cookiefile()
+        if cookiefile: opts["cookiefile"] = cookiefile
+        if YTDLP_PROXY: opts["proxy"] = YTDLP_PROXY
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            path = ydl.prepare_filename(info)
+            if not os.path.exists(path):
+                fs = [os.path.join(workdir,f) for f in os.listdir(workdir) if os.path.isfile(os.path.join(workdir,f))]
+                path = max(fs, key=os.path.getsize) if fs else None
+            return path, info.get("view_count"), (info.get("description") or info.get("title") or ""), (info.get("duration") or 30)
+    except Exception as e:
+        msg = str(e)
+        if platform == "youtube" and ("Sign in to confirm" in msg or "not a bot" in msg):
+            if YTDLP_PROXY or YTDLP_COOKIES_B64:
+                raise RuntimeError("YouTube rejected the configured session/IP. Refresh the cookies through the same proxy; see DEPLOY.md") from e
+            raise RuntimeError("YouTube challenged Railway's IP. Configure YTDLP_PROXY and YTDLP_COOKIES_B64; see DEPLOY.md") from e
+        raise
 
 GEMINI_PROMPT = """You are analyzing a single short-form social video. Return ONLY a JSON object, no prose, no markdown fences.
 
@@ -275,7 +328,7 @@ def run_job(jid):
             row["Views"] = v["views"] if v["views"] not in (None,"") else ""
             wd = tempfile.mkdtemp(prefix="vt_")
             try:
-                path, yv, yd, dur = download_video(v["url"], wd)
+                path, yv, yd, dur = download_video(v["url"], wd, platform)
                 if row["Views"] == "" and yv is not None: row["Views"] = yv
                 if not row["Post Copy"] and yd: row["Post Copy"] = yd
                 if not path: raise RuntimeError("download produced no file")

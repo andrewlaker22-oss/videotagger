@@ -1,4 +1,8 @@
+FROM denoland/deno:bin-2.9.6 AS deno
 FROM python:3.11-slim
+
+# yt-dlp now needs a supported JavaScript runtime for YouTube challenges.
+COPY --from=deno /deno /usr/local/bin/deno
 
 # ffmpeg is needed by yt-dlp to merge/convert video streams
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
