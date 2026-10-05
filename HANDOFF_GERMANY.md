@@ -81,23 +81,17 @@ Accounts: sandrosir, pkchomps, cardhome_store (Vienna), hypegen.87, nilopacks, d
 
 **Credits spent on Germany (net):** about 2,540. That's Pokemon search 111, tests 61, Pokemon accounts 317, community discovery 26, community batches 694, cameras/patches/@ebay.de 111, beef-up 396, eBay searches 821.
 
-## 7. What's left to wrap up Germany
-1. **Pull German eBay.de seller accounts** (60 days), the recommended way to build Half B. Candidates found in the searches:
-   - airliftvintage (Shopairlift, vintage streetwear, runs eBay Live auctions; 223K-view post)
-   - echtheitscheck (Echtheitscheck.de, authentication, eBay Live events with eBay Deutschland)
-   - thewatchdive (watch creator reacting to eBay Live luxury watch auctions, 103K)
-   - diegoldfrau (GoldFrau, jewelry eBay Live streams)
-   - packmysales0 (German reseller packing eBay.de sales, prices in euros)
-   - virello__shop (bags, #ebayde)
-   - b2b_retourenbros (Retourenbros, returns pallets, live auctions from 1 euro)
-   - aureliehaas55 (Germany-market eBay seller)
-   - Optional: angymkvb (sponsored eBay Live video, 6.4M views; general creator), recommerce_360 (returns B2B).
-   - Estimate ~100 per creator / 40 per shop before refunds, roughly 700 to 1,000 for these. That's within the remaining 5,000 approval.
-   - Then keep only eBay-related rows (caption or summary mentions eBay / eBay Live / ebay.de, not Kleinanzeigen) and write `exports/germany_ebay_sellers.csv`.
-2. **Also consider German creators @ebay.de already tags** (from `ebay_de_tiktok.csv`). Most came back empty or off topic; don't re-pull those listed in section 4.
-3. **Build the final Half B** = German-language eBay rows from the search CSV + eBay rows from the seller pulls. Report Kleinanzeigen and "Germany market" dropshipper rows separately, not inside the count.
-4. **Final totals table**: US vs Germany, Half A and Half B, with videos, on topic and median views, plus the actual split ratio (Germany will likely not be 50/50; say so plainly). Footnote the method differences: US = 12-month keyword search, ~1 video per account; Germany = 60-day account pulls plus search. Counts are videos surfaced, not audience or buying intent.
-5. **Open decisions to confirm with the user:** whether Austria (vintageconnaisseur, cardhome_store) counts as DACH or stays labeled Austria; whether to include the 56 Germany-market dropshipper rows in any count.
+## 7. Germany wrap-up (done 2026-10-05)
+- Pulled 8 German eBay.de seller accounts (60 days, project `a29a16a6-a7f6-4b99-8591-921e94a13885`): 299 videos, 336 credits net. Only 48 mention eBay (captions only; Adology summarized just 5 of 299). Files: `exports/germany_ebay_sellers.csv`, raw `data/germany/ebay_sellers_items.json`, script `scripts/germany/build_ebay_sellers.py`.
+  - packmysales0 19/19 eBay, aureliehaas55 11/28, b2b_retourenbros 10/70, airliftvintage 6/12 (5 eBay Live), echtheitscheck 1/66, virello__shop 1/1, thewatchdive 0/89, diegoldfrau 0/14.
+  - The "eBay Live" sellers mostly stream elsewhere too: airliftvintage also runs Whatnot streams, Retourenbros pushes TikTok Live/TikTok Shop, echtheitscheck sells via Instagram live and TikTok Shop.
+- Germany eBay half: `exports/germany_ebay_half.csv` (script `scripts/germany/build_ebay_half.py`), deduped by video ID, in 3 tiers:
+  - German eBay (core): 64 videos, 16 accounts (48 seller posts + 16 German-language search videos), median 1,420 views.
+  - German eBay + Kleinanzeigen mixed: 5.
+  - eBay.de market, not German creators (mostly South Asian dropshippers): 53, reported separately.
+- Split: Germany is about 6% eBay / 94% community (64 vs 974 on-topic), or 11% / 89% counting all 3 tiers. The US was 50/50 (1,007 eBay search videos vs 1,738 on-topic community videos is really about 37% / 63% by count).
+- Germany credits, all work: about 2,876 net. eBay half: 1,157 of the 5,000 approved.
+- Still open for the user: whether Austria counts (DACH), and whether the dropshipper tier counts.
 
 ## 8. After Germany
 Next countries in order: UK, France, Italy. Use the same method: free check of what's already in Adology, a few local hashtag searches only to find accounts, a shortlist the user approves, then 60-day account pulls in batches under 500 credits. Start each country in a fresh chat with a brief like this one.
