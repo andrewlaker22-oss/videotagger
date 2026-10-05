@@ -89,7 +89,7 @@ Accounts: sandrosir, pkchomps, cardhome_store (Vienna), hypegen.87, nilopacks, d
   - German eBay (core): 64 videos, 16 accounts (48 seller posts + 16 German-language search videos), median 1,420 views.
   - German eBay + Kleinanzeigen mixed: 5.
   - eBay.de market, not German creators (mostly South Asian dropshippers): 53, reported separately.
-- Split: Germany is about 6% eBay / 94% community (64 vs 974 on-topic), or 11% / 89% counting all 3 tiers. The US was 50/50 (1,007 eBay search videos vs 1,738 on-topic community videos is really about 37% / 63% by count).
+- Split: Germany is about 6% eBay / 94% community (64 vs 974 on-topic), or 11% / 89% counting all 3 tiers. The US was 50/50.
 - Germany credits, all work: about 2,876 net. eBay half: 1,157 of the 5,000 approved.
 - Still open for the user: whether Austria counts (DACH), and whether the dropshipper tier counts.
 
