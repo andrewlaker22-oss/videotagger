@@ -49,3 +49,7 @@ if search is not None:
     is_ebay = df[search].astype(str).str.contains(r"ebay", case=False)
     for name, part in (("eBay searches", df[is_ebay]), ("community searches", df[~is_ebay])):
         print(f"{name}: {len(part)} videos | {int(part['_views'].sum()):,} views | median {part['_views'].median():,.0f}")
+
+    # Community-search videos only, by bucket (for breaking the 914 into categories like the Germany table)
+    print("\nCommunity searches only, by bucket:")
+    print(df[~is_ebay].groupby(df[bucket].astype(str)).size().sort_values(ascending=False).to_string())
