@@ -26,11 +26,15 @@ for r in rd('germany_ebay_sellers.csv'):
         add('German eBay (core)', 'seller account: ' + r['account_note'], r['account'], r, r['caption'], r['ai_summary'])
 # 2) German eBay searches: German-language rows that mention eBay
 for r in rd('germany_ebay_search.csv'):
-    if r['german'] == 'German-language' and r['mentions_ebay'] == 'yes':
-        tier = 'German eBay + Kleinanzeigen mixed' if r['kleinanzeigen'] else 'German eBay (core)'
-        add(tier, 'search: ' + r['search_term'], r['handle'], r, r['caption'], r['ai_summary'])
-    elif r['german'] == 'Germany market, not German-language' and r['mentions_ebay'] == 'yes':
-        add('eBay.de market, not German creators', 'search: ' + r['search_term'], r['handle'], r, r['caption'], r['ai_summary'])
+    if r['mentions_ebay'] != 'yes' or r['german'] not in ('German-language', 'Germany market, not German-language'):
+        continue
+    if r['kleinanzeigen'] or re.search(r'kleinanzeigen', r['caption'] + ' ' + r['ai_summary'], re.I):
+        tier = 'German eBay + Kleinanzeigen mixed'  # Kleinanzeigen is a separate company now
+    elif r['german'] == 'German-language':
+        tier = 'German eBay (core)'
+    else:
+        tier = 'eBay.de market, not German creators'
+    add(tier, 'search: ' + r['search_term'], r['handle'], r, r['caption'], r['ai_summary'])
 
 order = ['German eBay (core)', 'German eBay + Kleinanzeigen mixed', 'eBay.de market, not German creators']
 rows.sort(key=lambda r: (order.index(r['tier']), -(num(r['views']) or 0)))

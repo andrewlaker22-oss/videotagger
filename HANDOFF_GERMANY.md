@@ -87,9 +87,10 @@ Accounts: sandrosir, pkchomps, cardhome_store (Vienna), hypegen.87, nilopacks, d
   - The "eBay Live" sellers mostly stream elsewhere too: airliftvintage also runs Whatnot streams, Retourenbros pushes TikTok Live/TikTok Shop, echtheitscheck sells via Instagram live and TikTok Shop.
 - Germany eBay half: `exports/germany_ebay_half.csv` (script `scripts/germany/build_ebay_half.py`), deduped by video ID, in 3 tiers:
   - German eBay (core): 64 videos, 16 accounts (48 seller posts + 16 German-language search videos), median 1,420 views.
-  - German eBay + Kleinanzeigen mixed: 5.
-  - eBay.de market, not German creators (mostly South Asian dropshippers): 53, reported separately.
+  - German eBay + Kleinanzeigen mixed: 8 (any eBay row that also mentions Kleinanzeigen).
+  - eBay.de market, not German creators (mostly South Asian dropshippers): 50, reported separately.
 - Split: Germany is about 6% eBay / 94% community (64 vs 974 on-topic), or 11% / 89% counting all 3 tiers. The US was 50/50.
+- Full Germany totals table (per account, community, half): `exports/germany_totals.csv` (script `scripts/germany/build_totals.py`).
 - Germany credits, all work: about 2,876 net. eBay half: 1,157 of the 5,000 approved.
 - Still open for the user: whether Austria counts (DACH), and whether the dropshipper tier counts.
 
