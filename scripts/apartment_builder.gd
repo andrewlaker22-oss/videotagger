@@ -247,6 +247,10 @@ func _build_living_room() -> void:
 	_add_box(Vector3(1.8, 0.5, 0.5), Vector3(-3.5, 0.25, 3.65), "wood")
 	_add_box(Vector3(1.5, 0.85, 0.12), Vector3(-3.5, 1.15, 3.65), "dark")
 	_add_quad(Vector2(1.35, 0.7), Vector3(-3.5, 1.15, 3.58), "screen", PI)
+	# Floor lamp beside the TV stand (placeholder boxes + emissive shade).
+	_add_box(Vector3(0.3, 0.06, 0.3), Vector3(-2.3, 0.03, 3.55), "dark")
+	_add_box(Vector3(0.06, 1.6, 0.06), Vector3(-2.3, 0.8, 3.55), "dark")
+	_add_box(Vector3(0.4, 0.32, 0.4), Vector3(-2.3, 1.72, 3.55), "lamp_glow", 0.0, false)
 	# Floor lamp (the flickering warm light lives here).
 	_add_box(Vector3(0.06, 1.7, 0.06), Vector3(-5.0, 0.85, 0.6), "dark")
 	_add_box(Vector3(0.35, 0.3, 0.35), Vector3(-5.0, 1.8, 0.6), "lamp_glow", 0.0, false)
@@ -325,6 +329,7 @@ func _build_lights() -> void:
 	# (position, color, energy, range, flicker mode)
 	_add_light(Vector3(-8, 2.6, 0), Color(0.6, 0.7, 1.0), 1.2, 7.0, "buzz")      # hallway
 	_add_light(Vector3(-5.0, 1.9, 0.6), Color(1.0, 0.75, 0.5), 2.2, 9.0, "dying") # living lamp
+	_add_light(Vector3(-2.3, 1.65, 3.55), Color(1.0, 0.8, 0.55), 1.4, 6.0, "steady") # TV lamp
 	_add_light(Vector3(4, 2.6, -2), Color(0.85, 0.9, 1.0), 1.6, 7.0, "steady")    # kitchen
 	_add_light(Vector3(4, 2.5, 2), Color(1.0, 0.8, 0.6), 1.2, 7.0, "steady")      # bedroom
 	_add_light(Vector3(0.5, 2.7, -2.75), Color(0.8, 1.0, 0.9), 1.4, 6.0, "buzz")  # bathroom
