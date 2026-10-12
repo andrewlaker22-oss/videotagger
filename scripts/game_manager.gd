@@ -31,6 +31,24 @@ const CHECKLIST_FLAGS := {
 var state: int = State.EXPLORE
 var flags: Dictionary = {}
 
+## Hiding spots (future stalker room-check sequence — no stalker AI yet,
+## just the hide/unhide mechanic). "" = not hidden; otherwise one of
+## "bedroom_closet" / "bathroom_closet" / "foyer_closet".
+var hidden_spot_id: String = ""
+
+## Per-spot hide transform: where the player stands inside, and the yaw
+## they face (outward, through the door). Exit = wherever they stood when
+## they hid (stored in _hide_entry_pos), so unhide is always safe.
+const HIDE_SPOTS := {
+	"bedroom_closet": {"hide_pos": Vector3(6.30, 2.7, -0.5), "face_yaw": PI * 0.5},
+	"bathroom_closet": {"hide_pos": Vector3(-6.0, 2.7, -1.55), "face_yaw": 0.0},
+	"foyer_closet": {"hide_pos": Vector3(1.80, 0.0, 3.5), "face_yaw": PI * 0.5},
+}
+const HIDE_YAW_LIMIT := 1.05  # ~60 degrees of peeking while hidden.
+
+var _hide_entry_pos: Vector3 = Vector3.ZERO
+var _unhide_busy: bool = false
+
 var _beat: Dictionary = {}
 var _line_index: int = 0
 
@@ -95,6 +113,10 @@ func start_beat(beat_id: String) -> void:
 	if not beats.has(beat_id):
 		push_error("GameManager: unknown beat id '%s'." % beat_id)
 		return
+	# A story beat never plays while the player is hidden: step out first
+	# (instantly), then run the beat normally.
+	if is_player_hidden():
+		_unhide(true)
 	_beat = beats[beat_id]
 	phone_ui.advance_clock()
 	for effect in _beat.get("effects", []):
@@ -216,6 +238,97 @@ func _resume_explore() -> void:
 func _offer_chores() -> void:
 	ui.show_toast("The place is a mess. Tidy up? (Optional)")
 	ui.set_chores(chores.get_checklist())
+
+
+# ------------------------------------------------------------------
+# Hiding spots. E on a "hide_*" hotspot snaps the player just inside the
+# closet (facing out), swings the door shut, and locks movement while
+# keeping mouse-look (clamped to a peek cone). E again steps back out.
+# No stalker AI reads this yet; is_player_hidden()/hidden_spot_id are
+# the future-proof query surface.
+# ------------------------------------------------------------------
+
+func is_player_hidden() -> bool:
+	return hidden_spot_id != ""
+
+
+func _hide(spot_id: String) -> void:
+	if is_player_hidden() or state != State.EXPLORE:
+		return
+	if not HIDE_SPOTS.has(spot_id):
+		return
+	var spot: Dictionary = HIDE_SPOTS[spot_id]
+	_hide_entry_pos = player.global_position
+	hidden_spot_id = spot_id
+	player.velocity = Vector3.ZERO
+	player.global_position = spot["hide_pos"]
+	player.rotation.y = float(spot["face_yaw"])
+	player.head.rotation.x = 0.0
+	player.movement_locked = true
+	player.set_yaw_limits(float(spot["face_yaw"]), HIDE_YAW_LIMIT)
+	apartment.set_hide_door(spot_id, false)
+	var inter := _find_interactable("hide_" + spot_id)
+	if inter != null:
+		inter.disable()
+	ui.hide_prompt()
+	ui.show_prompt("Hidden — E to come out")
+	audio.play_sfx("hide")
+
+
+func _unhide(instant: bool = false) -> void:
+	if not is_player_hidden() or _unhide_busy:
+		return
+	var spot_id := hidden_spot_id
+	if instant:
+		# Story beat fired mid-hide: snap everything, no waiting.
+		apartment.set_hide_door_immediate(spot_id, true)
+		_finish_unhide(spot_id)
+		return
+	_unhide_busy = true
+	apartment.set_hide_door(spot_id, true)
+	await get_tree().create_timer(0.45).timeout
+	_unhide_busy = false
+	if hidden_spot_id == spot_id:
+		_finish_unhide(spot_id)
+
+
+func _finish_unhide(spot_id: String) -> void:
+	hidden_spot_id = ""
+	player.movement_locked = false
+	player.clear_yaw_limits()
+	player.velocity = Vector3.ZERO
+	player.global_position = _hide_entry_pos
+	var inter := _find_interactable("hide_" + spot_id)
+	if inter != null:
+		inter.enable()
+	ui.hide_prompt()
+	audio.play_sfx("unhide")
+
+
+func _find_interactable(interact_id: String) -> Interactable:
+	for n in get_tree().get_nodes_in_group("interactable"):
+		var inter := n as Interactable
+		if inter != null and inter.interact_id == interact_id:
+			return inter
+	return null
+
+
+func _enable_interactable(interact_id: String) -> void:
+	var inter := _find_interactable(interact_id)
+	if inter != null:
+		inter.enable()
+
+
+## Fully retires an interactable: disabled AND removed from the interact
+## ray, so it can never occlude a hotspot placed behind/over it.
+func _retire_interactable(interact_id: String) -> void:
+	var inter := _find_interactable(interact_id)
+	if inter == null:
+		return
+	inter.disable()
+	for c in inter.get_children():
+		if c is CollisionShape3D:
+			(c as CollisionShape3D).disabled = true
 
 
 ## First checklist item id whose flag is not set ("" when all done).
@@ -363,8 +476,17 @@ func _on_choice_hotkey(index: int) -> void:
 
 
 func _try_interact() -> void:
+	# E while hidden always steps out — no aim needed.
+	if is_player_hidden():
+		_unhide()
+		return
 	var inter: Interactable = player.current
 	if inter == null or not inter.enabled:
+		return
+	# Hiding-spot hotspots go to the hide mechanic (never story beats).
+	var cid := String(inter.interact_id)
+	if cid.begins_with("hide_"):
+		_hide(cid.trim_prefix("hide_"))
 		return
 	# Mechanical doors toggle instead of starting a story beat.
 	if String(inter.interact_id).begins_with("door_"):
@@ -372,7 +494,6 @@ func _try_interact() -> void:
 		audio.play_sfx("interact")
 		return
 	# Chore hotspots go to the ChoreManager (optional minigames).
-	var cid := String(inter.interact_id)
 	if cid.begins_with("trash_") or cid == "sink":
 		chores.interact(cid)
 		audio.play_sfx("interact")
@@ -393,11 +514,20 @@ func _try_interact() -> void:
 	if inter.one_shot:
 		inter.disable()
 	audio.play_sfx("interact")
+	# The bedroom wardrobe's story beat is consumed: retire its hotspot
+	# (including ray occlusion) and create the Hide hotspot for the door.
+	if inter.interact_id == "bedroom_closet":
+		_retire_interactable("bedroom_closet")
+		apartment.add_hide_hotspot("bedroom_closet")
 	start_beat(beat_id)
 
 
 func _on_focus_changed(interactable) -> void:
 	var inter := interactable as Interactable
+	if is_player_hidden():
+		# Keep the exit hint up; no other prompts while hidden.
+		ui.show_prompt("Hidden — E to come out")
+		return
 	if state == State.EXPLORE and inter != null:
 		ui.show_prompt("[E] " + inter.get_prompt())
 	else:

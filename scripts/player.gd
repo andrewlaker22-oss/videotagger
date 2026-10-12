@@ -19,6 +19,9 @@ signal focus_changed(interactable)  # Interactable under the crosshair, or null.
 var control_locked: bool = true   # Blocks movement + look (dialogue, choices).
 var allow_capture: bool = true    # May a click re-capture the mouse? Off during choices.
 var speed_factor: float = 1.0     # Movement multiplier (e.g. slower while carrying trash).
+var movement_locked: bool = false  # Blocks WASD only; look stays on (hiding).
+var yaw_limit: float = -1.0       # <0 = free look; else max yaw deviation (hiding).
+var yaw_base: float = 0.0         # Yaw the limit is measured from.
 var current: Interactable = null  # Interactable currently under the crosshair.
 
 var _shake: float = 0.0
@@ -38,6 +41,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if look_enabled() and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			var mm := event as InputEventMouseMotion
 			rotate_y(-mm.relative.x * mouse_sensitivity)
+			if yaw_limit >= 0.0:
+				# Peeking from a hiding spot: clamp yaw around the hide facing.
+				rotation.y = clampf(rotation.y, yaw_base - yaw_limit, yaw_base + yaw_limit)
 			head.rotate_x(-mm.relative.y * mouse_sensitivity)
 			head.rotation.x = clampf(head.rotation.x, look_min, look_max)
 	elif event is InputEventMouseButton:
@@ -70,6 +76,16 @@ func look_enabled() -> bool:
 	return not control_locked
 
 
+## Clamps mouse-look yaw to [base - limit, base + limit] (hiding spots).
+func set_yaw_limits(base: float, limit: float) -> void:
+	yaw_base = base
+	yaw_limit = limit
+
+
+func clear_yaw_limits() -> void:
+	yaw_limit = -1.0
+
+
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y -= 22.0 * delta
@@ -77,7 +93,7 @@ func _physics_process(delta: float) -> void:
 		velocity.y = -1.0
 
 	var dir := Vector3.ZERO
-	if not control_locked:
+	if not control_locked and not movement_locked:
 		var ix: float = float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
 		var iz: float = float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W))
 		dir = global_transform.basis * Vector3(ix, 0.0, iz)

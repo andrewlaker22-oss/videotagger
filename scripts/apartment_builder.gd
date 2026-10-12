@@ -102,6 +102,7 @@ var _flicker: Dictionary = {}  # light index -> {"until": float} (horror flicker
 var _unpack_lids: Dictionary = {}  # box_id -> lid StaticBody3D (hidden on open).
 var _unpack_markers: Dictionary = {}  # zone_id -> glowing marker MeshInstance3D.
 var _unpack_marker_mat: StandardMaterial3D  # shared pulsing emission material.
+var _hide_closets: Dictionary = {}  # spot_id -> {node, pivot, hotspot}.
 
 
 func _ready() -> void:
@@ -116,6 +117,7 @@ func _ready() -> void:
 	_build_bathroom()
 	_build_landing()
 	_build_basement()
+	_build_hide_closets()
 	_build_front_door()
 	_build_doors()
 	_build_windows()
@@ -239,6 +241,9 @@ func disable_all_interactables() -> void:
 			# The front-door lock persists too — the checklist survives beats.
 			if inter.interact_id == "front_door_lock":
 				continue
+			# Hiding spots stay usable in the dark — that is when they matter.
+			if String(inter.interact_id).begins_with("hide_"):
+				continue
 			inter.disable()
 
 
@@ -329,6 +334,28 @@ func _add_box(size: Vector3, pos: Vector3, mat_name: String, rot_y: float = 0.0,
 		cs.shape = shape
 		body.add_child(cs)
 	add_child(body)
+	return body
+
+
+## Same as _add_box but parented under an arbitrary node (for closet
+## assemblies that live in local space, possibly rotated).
+func _cadd_box(parent: Node3D, size: Vector3, pos: Vector3, mat_name: String, rot_y: float = 0.0, collide: bool = true) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.position = pos
+	body.rotation.y = rot_y
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	mi.material_override = _mat_by(mat_name)
+	body.add_child(mi)
+	if collide:
+		var cs := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = size
+		cs.shape = shape
+		body.add_child(cs)
+	parent.add_child(body)
 	return body
 
 
@@ -557,10 +584,8 @@ func _build_bedroom() -> void:
 	# Nightstand with the framed photo.
 	_add_box(Vector3(0.55, 0.55, 0.55), Vector3(4.3, y + 0.275, -4.5), "wood")
 	_add_box(Vector3(0.22, 0.28, 0.04), Vector3(4.3, y + 0.7, -4.5), "dark", 0.0, false)
-	# Wardrobe / closet.
-	_add_box(Vector3(1.3, 2.0, 0.6), Vector3(6.35, y + 1.0, -4.6), "wood")
-	_add_box(Vector3(0.04, 0.18, 0.04), Vector3(6.15, y + 1.1, -4.28), "metal", 0.0, false)
-	_add_box(Vector3(0.04, 0.18, 0.04), Vector3(6.55, y + 1.1, -4.28), "metal", 0.0, false)
+	# Wardrobe / closet: built enterable by _build_hide_closets() (see the
+	# Hiding spots section) so Mara can hide inside it later in the story.
 
 
 func _build_bathroom() -> void:
@@ -601,6 +626,128 @@ func _build_basement() -> void:
 	_add_box(Vector3(0.15, 0.7, 0.5), Vector3(6.82, y + 1.35, -1.0), "metal")
 	# Tiny red LED so it can be found in the dark (emissive; blackout can't kill it).
 	_add_box(Vector3(0.03, 0.06, 0.06), Vector3(6.73, y + 1.6, -1.0), "led_red", 0.0, false)
+
+
+# ------------------------------------------------------------------
+# Hiding spots. Three enterable closets for a future stalker room-check
+# sequence (no stalker AI yet): the bedroom wardrobe, a bathroom linen
+# cabinet, and a foyer coat closet. Each is a hollow carcass with a
+# hinged door that swings OUTWARD (never through a hidden player).
+# The GameManager owns the hide/unhide state; this only builds the set
+# dressing and exposes door control.
+# ------------------------------------------------------------------
+
+# [spot_id, center, rot_y, hotspot_pos, hotspot_extents].
+# The door sits on the local +Z face; rot_y turns it to face the room.
+# (The bedroom wardrobe lives on the east wall: the north wall can't fit
+# it clear of the bed's north-east corner.)
+const HIDE_CLOSETS: Array = [
+	["bedroom_closet", Vector3(6.35, 2.7, -0.5), -PI * 0.5, Vector3(5.25, 3.9, -0.5), Vector3(0.4, 0.65, 0.55)],
+	["bathroom_closet", Vector3(-6.0, 2.7, -1.5), PI, Vector3(-6.0, 3.9, -2.6), Vector3(0.5, 0.65, 0.35)],
+	["foyer_closet", Vector3(1.85, 0.0, 3.5), -PI * 0.5, Vector3(0.75, 1.2, 3.5), Vector3(0.35, 0.65, 0.55)],
+]
+
+const HIDE_DOOR_OPEN_ANGLE := -1.75  # swings outward, into the room.
+
+
+func _build_hide_closets() -> void:
+	for c in HIDE_CLOSETS:
+		# The bedroom wardrobe doubles as the "closet" story beat: its Hide
+		# hotspot is only created once that beat is consumed, so the two
+		# hotspots never occlude each other on the same door.
+		var make_hotspot := String(c[0]) != "bedroom_closet"
+		_build_hide_closet(String(c[0]), c[1], float(c[2]), c[3], c[4], make_hotspot)
+
+
+func _build_hide_closet(spot_id: String, center: Vector3, rot_y: float, hotspot_pos: Vector3, hotspot_extents: Vector3, make_hotspot: bool = true) -> void:
+	var w := 1.1   # interior ~0.98 m wide
+	var d := 1.0   # interior ~0.88 m deep
+	var h := 2.1
+	var t := 0.06  # panel thickness
+	var node := Node3D.new()
+	node.position = center
+	node.rotation.y = rot_y
+	add_child(node)
+	# Carcass: back, sides, top. No floor panel (the room floor is the floor).
+	_cadd_box(node, Vector3(w, h, t), Vector3(0, h * 0.5, -d * 0.5 + t * 0.5), "wood")
+	_cadd_box(node, Vector3(t, h, d), Vector3(-w * 0.5 + t * 0.5, h * 0.5, 0), "wood")
+	_cadd_box(node, Vector3(t, h, d), Vector3(w * 0.5 - t * 0.5, h * 0.5, 0), "wood")
+	_cadd_box(node, Vector3(w, t, d), Vector3(0, h - t * 0.5, 0), "wood")
+	# Hanging rod, high and clear of the player's head (visual only).
+	_cadd_box(node, Vector3(w - 2.0 * t, 0.04, 0.04), Vector3(0, 1.78, -0.15), "dark", 0.0, false)
+	# Hinged door on the +Z (front) face. Pivot at the left jamb; the panel
+	# extends +X when closed and swings outward (+Z, into the room).
+	var panel_w := w - 2.0 * t - 0.04
+	var pivot := Node3D.new()
+	pivot.position = Vector3(-w * 0.5 + t + 0.01, 0, d * 0.5)
+	node.add_child(pivot)
+	var panel := _cadd_box(pivot, Vector3(panel_w, 2.0, 0.06), Vector3(panel_w * 0.5 + 0.01, 1.0, 0), "door")
+	# Knob near the panel's free edge.
+	var knob := MeshInstance3D.new()
+	var km := BoxMesh.new()
+	km.size = Vector3(0.07, 0.07, 0.12)
+	knob.mesh = km
+	knob.material_override = _mat_by("metal")
+	knob.position = Vector3(panel_w * 0.5 - 0.12, 0, 0.05)
+	panel.add_child(knob)
+	# Hide hotspot in front of the door. Reusable, never one-shot.
+	_hide_closets[spot_id] = {"node": node, "pivot": pivot, "hotspot": null,
+		"hotspot_pos": hotspot_pos, "hotspot_extents": hotspot_extents}
+	if make_hotspot:
+		add_hide_hotspot(spot_id)
+
+
+## Creates the Hide hotspot for a hiding spot (the bedroom one is deferred
+## until its story beat is consumed). Calling it again just re-enables the
+## hotspot, so it is also safe for future systems (e.g. the stalker
+## sequence) to call directly.
+func add_hide_hotspot(spot_id: String) -> void:
+	if not _hide_closets.has(spot_id):
+		push_warning("ApartmentBuilder: unknown hiding spot '%s'." % spot_id)
+		return
+	var d: Dictionary = _hide_closets[spot_id]
+	if d["hotspot"] != null:
+		(d["hotspot"] as Interactable).enable()
+		return
+	var inter := _add_interactable("hide_" + spot_id, "Hide",
+		d["hotspot_pos"], d["hotspot_extents"])
+	inter.one_shot = false
+	d["hotspot"] = inter
+
+
+## Swings a hiding-spot door open (tween) or shut. Driven by the
+## GameManager as part of hide/unhide; doors are never toggled directly.
+func set_hide_door(spot_id: String, open: bool) -> void:
+	if not _hide_closets.has(spot_id):
+		push_warning("ApartmentBuilder: unknown hiding spot '%s'." % spot_id)
+		return
+	var d: Dictionary = _hide_closets[spot_id]
+	var old_tw: Tween = d.get("tween")
+	if old_tw != null and old_tw.is_valid():
+		old_tw.kill()
+	var pivot: Node3D = d["pivot"]
+	var target: float = HIDE_DOOR_OPEN_ANGLE if open else 0.0
+	var tw := create_tween()
+	d["tween"] = tw
+	tw.tween_property(pivot, "rotation:y", target, 0.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+
+## Snaps a hiding-spot door open/shut instantly (story-beat safety path).
+func set_hide_door_immediate(spot_id: String, open: bool) -> void:
+	if not _hide_closets.has(spot_id):
+		return
+	var d: Dictionary = _hide_closets[spot_id]
+	var old_tw: Tween = d.get("tween")
+	if old_tw != null and old_tw.is_valid():
+		old_tw.kill()
+	(d["pivot"] as Node3D).rotation.y = HIDE_DOOR_OPEN_ANGLE if open else 0.0
+
+
+## Enables a hiding spot's Hide hotspot. The bedroom one starts disabled
+## until the "closet" story beat is consumed; future systems (e.g. the
+## stalker sequence) can also call this directly.
+func enable_hide_spot(spot_id: String) -> void:
+	add_hide_hotspot(spot_id)
 
 
 func _build_front_door() -> void:
@@ -787,7 +934,7 @@ func _build_interactables() -> void:
 	# interact_id must match a key in StoryData.get_trigger_beats().
 	_add_interactable("fridge_note", "Read the note", Vector3(5.725, 1.35, -3.95), Vector3(0.4, 0.4, 0.3))
 	_add_interactable("bedroom_photo", "Look at the photo", Vector3(4.3, UPPER_Y + 0.85, -4.5), Vector3(0.35, 0.35, 0.35))
-	_add_interactable("bedroom_closet", "Open the closet", Vector3(6.35, UPPER_Y + 1.1, -4.15), Vector3(0.7, 0.8, 0.3))
+	_add_interactable("bedroom_closet", "Open the closet", Vector3(5.6, UPPER_Y + 1.1, -0.5), Vector3(0.3, 0.8, 0.7))
 	_add_interactable("bathroom_mirror", "Look in the mirror", Vector3(-6.3, UPPER_Y + 1.6, -4.1), Vector3(0.45, 0.55, 0.35))
 	_add_interactable("kitchen_knife", "Look at the knife", Vector3(3.2, 1.1, -4.25), Vector3(0.5, 0.4, 0.4))
 	_add_interactable("breaker_box", "Flip the breaker", Vector3(6.4, BASE_Y + 1.35, -1.0), Vector3(0.35, 0.45, 0.35))
