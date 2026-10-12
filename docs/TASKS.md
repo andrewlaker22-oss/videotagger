@@ -47,3 +47,4 @@ pick it up without reading the whole codebase — start at `docs/AI_HANDOFF.md`.
 ## Done
 - [x] Prototype: two-story house + basement level, 17 story beats (incl. basement breaker), timed choices, 3 endings, docs, repo scaffold.
 - [x] Functional doors (bedroom, basement, back, outhouse — E toggles, work in blackout), 7 windows, backyard + fenced yard + outhouse. Fixed stairwell slab-hole slots and front-door lintel hole.
+- [x] iPhone-style text message system: phone UI (thread list, bubbles, badges, banner, 11:47 PM clock), 3 threads (Mom, Jess, Unknown), 11 beat-triggered texts incl. escalating stalker messages + 2 scripted Mara outgoing, Tab/Esc toggle, works during blackout.

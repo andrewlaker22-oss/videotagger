@@ -24,6 +24,7 @@ var _line_index: int = 0
 @onready var ui: DialogueUI = $DialogueUI
 @onready var apartment: ApartmentBuilder = $Apartment
 @onready var audio: AudioManager = $AudioManager
+@onready var phone_ui: PhoneUI = $PhoneUI
 @onready var world_env: WorldEnvironment = $WorldEnvironment
 
 
@@ -32,6 +33,7 @@ func _ready() -> void:
 	player.choice_hotkey.connect(_on_choice_hotkey)
 	player.focus_changed.connect(_on_focus_changed)
 	ui.choice_selected.connect(_on_choice_selected)
+	phone_ui.load_threads(StoryData.get_phone_threads())
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	ui.fade_from_black()
 	await get_tree().create_timer(1.4).timeout
@@ -39,10 +41,21 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if state == State.ENDING and event is InputEventKey:
+	if event is InputEventKey:
 		var k := event as InputEventKey
-		if k.pressed and not k.echo and k.physical_keycode == KEY_R:
-			get_tree().reload_current_scene()
+		if k.pressed and not k.echo:
+			match k.physical_keycode:
+				KEY_R:
+					if state == State.ENDING:
+						get_tree().reload_current_scene()
+				KEY_TAB:
+					if state == State.EXPLORE:
+						_toggle_phone()
+						get_viewport().set_input_as_handled()
+				KEY_ESCAPE:
+					if phone_ui.is_open():
+						_close_phone()
+						get_viewport().set_input_as_handled()
 
 
 # ------------------------------------------------------------------
@@ -55,8 +68,12 @@ func start_beat(beat_id: String) -> void:
 		push_error("GameManager: unknown beat id '%s'." % beat_id)
 		return
 	_beat = beats[beat_id]
+	phone_ui.advance_clock()
 	for effect in _beat.get("effects", []):
-		_apply_effect(String(effect))
+		if effect is Dictionary:
+			_apply_effect_dict(effect)
+		else:
+			_apply_effect(String(effect))
 	if _beat.has("objective"):
 		ui.set_objective(String(_beat["objective"]))
 	state = State.DIALOGUE
@@ -154,13 +171,42 @@ func _resume_explore() -> void:
 
 
 # ------------------------------------------------------------------
+# Phone (Tab to open/close during EXPLORE only)
+# ------------------------------------------------------------------
+
+func _toggle_phone() -> void:
+	if phone_ui.is_open():
+		_close_phone()
+	else:
+		_open_phone()
+
+
+func _open_phone() -> void:
+	phone_ui.open()
+	ui.hide_prompt()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	player.control_locked = true
+	player.allow_capture = false
+	audio.play_sfx("phone_open")
+
+
+func _close_phone() -> void:
+	phone_ui.close()
+	player.control_locked = false
+	player.allow_capture = true
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	audio.play_sfx("phone_close")
+
+
+# ------------------------------------------------------------------
 # Input routing (raw signals from the Player)
 # ------------------------------------------------------------------
 
 func _on_primary_action() -> void:
 	match state:
 		State.EXPLORE:
-			_try_interact()
+			if not phone_ui.is_open():
+				_try_interact()
 		State.DIALOGUE:
 			_advance_line()
 		_:
@@ -222,3 +268,18 @@ func _apply_effect(effect_name: String) -> void:
 			audio.play_sfx("power_stutter")
 		_:
 			push_warning("GameManager: unknown beat effect '%s'." % effect_name)
+
+
+## Dictionary beat effects (see the "effects" schema in story_data.gd).
+func _apply_effect_dict(d: Dictionary) -> void:
+	match String(d.get("effect", "")):
+		"text":
+			var from_id := String(d.get("from", ""))
+			var text := String(d.get("text", ""))
+			if from_id == "mara":
+				phone_ui.send_text(String(d.get("to", "")), text)
+			else:
+				phone_ui.receive_text(from_id, text)
+				audio.play_sfx("text_buzz")
+		_:
+			push_warning("GameManager: unknown dict beat effect '%s'." % str(d.get("effect", "")))

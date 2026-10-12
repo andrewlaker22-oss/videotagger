@@ -10,8 +10,16 @@ extends RefCounted
 ##
 ## Beat schema:
 ##   "objective": String        - HUD objective text set when the beat starts (optional).
-##   "effects": Array[String]   - one-shot world effects at beat start: "open_door",
-##                                "blackout", "power_stutter", "phone_ring" (optional).
+##   "effects": Array           - one-shot world effects at beat start (optional).
+##                                Each entry is a String effect name ("open_door",
+##                                "blackout", "power_stutter", "phone_ring") OR a
+##                                Dictionary for the "text" effect:
+##                                  {"effect": "text", "from": <thread_id>,
+##                                   "text": <message>}            - incoming text
+##                                  {"effect": "text", "from": "mara",
+##                                   "to": <thread_id>, "text": <message>}
+##                                                             - Mara auto-sends
+##                                Thread ids come from get_phone_threads().
 ##   "lines": Array[Dictionary] - dialogue shown in order. Each line:
 ##       "who":  speaker tag ("" = narration, no speaker label)
 ##       "text": the line itself
@@ -51,6 +59,42 @@ static func get_trigger_beats() -> Dictionary:
 	}
 
 
+## Phone threads for the iPhone-style message UI (phone_ui.gd).
+##
+## Thread schema:
+##   "name":     display name in the thread list
+##   "number":   subtitle for unknown contacts ("" for saved contacts)
+##   "messages": starter messages, each {"from": "them"/"me", "text", "time"}
+## Beat-triggered texts arrive via the "text" beat effect (see schema above);
+## they are timestamped with the phone's clock when delivered.
+static func get_phone_threads() -> Dictionary:
+	return {
+		"mom": {
+			"name": "Mom",
+			"number": "",
+			"messages": [
+				{"from": "them", "text": "did you get home safe??", "time": "11:02 PM"},
+				{"from": "me", "text": "just walked in! all good", "time": "11:05 PM"},
+				{"from": "them", "text": "ok good ❤ don't forget we're doing groceries sunday", "time": "11:06 PM"},
+			],
+		},
+		"jess": {
+			"name": "Jess",
+			"number": "",
+			"messages": [
+				{"from": "them", "text": "u up", "time": "10:48 PM"},
+				{"from": "them", "text": "u HAVE to show me the new place this weekend", "time": "10:49 PM"},
+				{"from": "me", "text": "lol it's literally boxes and an air mattress rn", "time": "10:52 PM"},
+			],
+		},
+		"unknown": {
+			"name": "Unknown",
+			"number": "No Caller ID",
+			"messages": [],
+		},
+	}
+
+
 static func get_beats() -> Dictionary:
 	return {
 		# ------------------------------------------------------------------
@@ -58,6 +102,9 @@ static func get_beats() -> Dictionary:
 		# ------------------------------------------------------------------
 		"intro": {
 			"objective": "Get inside.",
+			"effects": [
+				{"effect": "text", "from": "unknown", "text": "i can see your lights on"},
+			],
 			"lines": [
 				{"who": "", "text": "11:47 PM. The hallway smells like rain and old cigarettes."},
 				{"who": "", "text": "Your door is open. Just a crack. You never leave it unlocked."},
@@ -89,7 +136,10 @@ static func get_beats() -> Dictionary:
 			"next": "entry",
 		},
 		"entry": {
-			"effects": ["open_door"],
+			"effects": ["open_door",
+				{"effect": "text", "from": "mara", "to": "mom", "text": "home safe! love you"},
+				{"effect": "text", "from": "jess", "text": "how's the first night in the new place??"},
+			],
 			"objective": "Look around the living room.",
 			"lines": [
 				{"who": "", "text": "You step inside. The air is wrong — too still, like the apartment is holding its breath."},
@@ -117,6 +167,9 @@ static func get_beats() -> Dictionary:
 		},
 		"phone_answer": {
 			"objective": "Check the bedroom.",
+			"effects": [
+				{"effect": "text", "from": "unknown", "text": "you sound scared"},
+			],
 			"lines": [
 				{"who": "MARA", "text": "Hello? Who is this?"},
 				{"who": "", "text": "Breathing. Slow. Close."},
@@ -127,6 +180,9 @@ static func get_beats() -> Dictionary:
 		},
 		"phone_ignore": {
 			"objective": "Check the bedroom.",
+			"effects": [
+				{"effect": "text", "from": "unknown", "text": "pick up next time"},
+			],
 			"lines": [
 				{"who": "", "text": "It rings. And rings. And rings. Then stops."},
 				{"who": "MARA", "text": "Wrong number. Just a wrong number. That's all."},
@@ -137,6 +193,9 @@ static func get_beats() -> Dictionary:
 		# 3. BEDROOM — the photo, the closet.
 		# ------------------------------------------------------------------
 		"photo": {
+			"effects": [
+				{"effect": "text", "from": "unknown", "text": "you look so peaceful when you sleep"},
+			],
 			"lines": [
 				{"who": "", "text": "A framed photo on the nightstand. You, asleep. Taken last night — from the foot of the bed."},
 				{"who": "MARA", "text": "That's my bedroom. That's last night."},
@@ -155,6 +214,9 @@ static func get_beats() -> Dictionary:
 		# ------------------------------------------------------------------
 		"mirror": {
 			"objective": "Check the kitchen.",
+			"effects": [
+				{"effect": "text", "from": "unknown", "text": "turn around"},
+			],
 			"lines": [
 				{"who": "", "text": "The mirror is fogged. The shower hasn't run in hours."},
 				{"who": "", "text": "Words, dragged through the steam:"},
@@ -167,6 +229,9 @@ static func get_beats() -> Dictionary:
 		# 5. KITCHEN — the knife, then the blackout.
 		# ------------------------------------------------------------------
 		"knife": {
+			"effects": [
+				{"effect": "text", "from": "unknown", "text": "nice knife"},
+			],
 			"lines": [
 				{"who": "", "text": "Your good kitchen knife. It's not in the block. It's lying in the middle of the counter — like it was placed there. Displayed."},
 			],
@@ -178,7 +243,10 @@ static func get_beats() -> Dictionary:
 			],
 		},
 		"blackout": {
-			"effects": ["blackout"],
+			"effects": ["blackout",
+				{"effect": "text", "from": "unknown", "text": "dark in there, isn't it"},
+				{"effect": "text", "from": "mara", "to": "mom", "text": "hey if i don't text you in an hour call me"},
+			],
 			"objective": "Survive.",
 			"lines": [
 				{"who": "", "text": "The lights die."},
@@ -198,7 +266,9 @@ static func get_beats() -> Dictionary:
 		},
 		"breaker": {
 			"objective": "Survive.",
-			"effects": ["power_stutter"],
+			"effects": ["power_stutter",
+				{"effect": "text", "from": "unknown", "text": "nice try"},
+			],
 			"lines": [
 				{"who": "", "text": "The breaker box hangs open. Every switch is thrown to OFF."},
 				{"who": "MARA", "text": "Come on. Come on—"},

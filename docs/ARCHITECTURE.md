@@ -14,6 +14,8 @@ Main (Node3D) — game_manager.gd
 │       └── Camera3D (fov 70)
 │           └── InteractRay (RayCast3D, 2.6 m forward)
 ├── DialogueUI (CanvasLayer) — dialogue_ui.gd (builds all widgets in _ready)
+├── PhoneUI (CanvasLayer) — phone_ui.gd (iPhone-style text UI: thread list,
+│   conversation bubbles, unread badges, notification banner, status clock)
 └── AudioManager (Node) — audio_manager.gd (stubbed)
 ```
 
@@ -27,6 +29,7 @@ Main (Node3D) — game_manager.gd
 | `dialogue_ui.gd` | Objective, prompt, dialogue box, timed choices + countdown, toasts, letterbox, ending screen, fade-in | Story data, state |
 | `interactable.gd` | Hotspot node: `interact_id`, `prompt`, `enabled` | Its story meaning (that's in `story_data`) |
 | `apartment_builder.gd` | Level geometry from `WALLS` data table, stairs (visual steps + collision ramps), props, lights + flicker, door tween, blackout, power stutter | Story |
+| `phone_ui.gd` | iPhone UI: thread list / conversation views, unread badges, notification banner queue, status-bar clock; renders only, driven by the GameManager | Story data, input routing, game state |
 | `audio_manager.gd` | `play_sfx` / `play_music` / `stop_music` hooks (currently print) | Anything else |
 
 ## The story state machine
@@ -66,6 +69,30 @@ is the canonical schema reference). Summary:
 
 `get_trigger_beats()` maps `Interactable.interact_id` → beat id, so level
 designers place hotspots and writers name beats without touching each other's files.
+
+## Phone / text message system (`phone_ui.gd`)
+
+- **UI**: dark-mode iPhone that slides up from the bottom-right. Thread list
+  (Mom / Jess / Unknown) with avatar initials, previews, and unread badges;
+  conversation view with gray incoming / blue outgoing bubbles and timestamps;
+  status bar with Dynamic Island, signal glyph, and the phone clock.
+  Mara never types — her outgoing messages are scripted by story data.
+- **Clock**: starts at 11:46 PM; `GameManager.start_beat()` advances it +1 min
+  per beat, so the intro beat reads 11:47 PM (matching the story).
+- **Input**: `Tab` toggles the phone during EXPLORE only (releases the mouse
+  for tapping; `Tab`/`Esc` closes and recaptures). Not allowed during DIALOGUE
+  (E advances lines) or CHOICE (timer keeps running). While open, the player
+  can't walk (`control_locked`), but the game keeps running — horror tension.
+- **Notifications**: a banner slides down from the top for ~4 s whenever a text
+  arrives (even mid-dialogue/choice); banners queue if several arrive at once.
+  Unread badges accumulate per thread; opening a thread marks it read. Banner
+  is display-only (mouse is usually captured). Incoming texts play the
+  `text_buzz` sfx hook.
+- **Data**: threads + starter messages live in `StoryData.get_phone_threads()`.
+  Beat-triggered texts use the `"text"` effect — a Dictionary entry in a beat's
+  `"effects"` array: `{"effect": "text", "from": <thread_id>, "text": ...}`
+  for incoming, `{"effect": "text", "from": "mara", "to": <thread_id>, ...}`
+  for Mara's scripted outgoing messages.
 
 ## Floor plan (all dimensions in meters)
 

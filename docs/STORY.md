@@ -151,6 +151,46 @@ Notation: `(beat: id)` = story beat; `[CHOICE — 6s]` = timed choice with timeo
 
 ---
 
+## PHONE MESSAGES — the text threads (verbatim)
+
+Mara's phone holds three threads. She never types — scripted outgoing messages
+send automatically at story beats. The stalker is never identified: every
+message arrives from "Unknown / No Caller ID".
+
+### Thread: Mom (starter messages, pre-game)
+
+> **Mom** 11:02 PM: did you get home safe??
+>
+> **Mara** 11:05 PM: just walked in! all good
+>
+> **Mom** 11:06 PM: ok good ❤ don't forget we're doing groceries sunday
+
+### Thread: Jess (starter messages, pre-game)
+
+> **Jess** 10:48 PM: u up
+>
+> **Jess** 10:49 PM: u HAVE to show me the new place this weekend
+>
+> **Mara** 10:52 PM: lol it's literally boxes and an air mattress rn
+
+### Thread: Unknown / No Caller ID (starts empty)
+
+| Beat | Message |
+|---|---|
+| `intro` | i can see your lights on |
+| `entry` → Mara to Mom (auto-sent) | home safe! love you |
+| `entry` → Jess | how's the first night in the new place?? |
+| `phone_answer` | you sound scared |
+| `phone_ignore` | pick up next time |
+| `photo` | you look so peaceful when you sleep |
+| `mirror` | turn around |
+| `knife` | nice knife |
+| `blackout` | dark in there, isn't it |
+| `blackout` → Mara to Mom (auto-sent) | hey if i don't text you in an hour call me |
+| `breaker` | nice try |
+
+---
+
 ## ENDINGS
 
 ### ESCAPE — “WATCHED” / *You got out. (Or did you?)*
