@@ -48,6 +48,7 @@ fov = 70.0
 
 [node name="InteractRay" type="RayCast3D" parent="Player/Head/Camera3D"]
 target_position = Vector3(0, 0, -2.6)
+collision_mask = 3
 
 [node name="DialogueUI" type="CanvasLayer" parent="."]
 script = ExtResource("4")

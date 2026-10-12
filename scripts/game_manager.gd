@@ -176,6 +176,11 @@ func _try_interact() -> void:
 	var inter: Interactable = player.current
 	if inter == null or not inter.enabled:
 		return
+	# Mechanical doors toggle instead of starting a story beat.
+	if String(inter.interact_id).begins_with("door_"):
+		apartment.toggle_door(inter.interact_id)
+		audio.play_sfx("interact")
+		return
 	var beat_id := String(StoryData.get_trigger_beats().get(inter.interact_id, ""))
 	if beat_id == "":
 		push_warning("GameManager: interactable '%s' has no mapped beat." % inter.interact_id)

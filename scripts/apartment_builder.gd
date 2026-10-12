@@ -31,12 +31,23 @@ const UPPER_Y := 2.7
 # Wall segments as [Vector2, Vector2, y_base] in the XZ plane. Door gaps are
 # made by splitting a wall into two segments; see the plan above.
 const WALLS: Array = [
-	# ---- GROUND FLOOR (y0 = 0). Front-door gap in south wall, x in [0.2, 1.4].
-	[Vector2(-7, -5), Vector2(7, -5), GROUND_Y],
-	[Vector2(-7, 5), Vector2(0.2, 5), GROUND_Y],
-	[Vector2(1.4, 5), Vector2(7, 5), GROUND_Y],
-	[Vector2(-7, -5), Vector2(-7, 5), GROUND_Y],
-	[Vector2(7, -5), Vector2(7, 5), GROUND_Y],
+	# ---- GROUND FLOOR (y0 = 0).
+	# North wall (z=-5): back-door gap x in [4.0, 5.2].
+	[Vector2(-7, -5), Vector2(4.0, -5), GROUND_Y],
+	[Vector2(5.2, -5), Vector2(7, -5), GROUND_Y],
+	# South wall (z=5): front-door gap x in [0.2, 1.4]; window gaps
+	# x in [-2.5, -1.3] and [3.1, 4.3].
+	[Vector2(-7, 5), Vector2(-2.5, 5), GROUND_Y],
+	[Vector2(-1.3, 5), Vector2(0.2, 5), GROUND_Y],
+	[Vector2(1.4, 5), Vector2(3.1, 5), GROUND_Y],
+	[Vector2(4.3, 5), Vector2(7, 5), GROUND_Y],
+	# West wall (x=-7): window gaps z in [-3.6, -2.4] and [0.4, 1.6].
+	[Vector2(-7, -5), Vector2(-7, -3.6), GROUND_Y],
+	[Vector2(-7, -2.4), Vector2(-7, 0.4), GROUND_Y],
+	[Vector2(-7, 1.6), Vector2(-7, 5), GROUND_Y],
+	# East wall (x=7): window gap z in [-2.6, -1.4].
+	[Vector2(7, -5), Vector2(7, -2.6), GROUND_Y],
+	[Vector2(7, -1.4), Vector2(7, 5), GROUND_Y],
 	# x=-1 (living | stair hall + foyer). Wide opening z in [0, 2].
 	[Vector2(-1, -5), Vector2(-1, 0), GROUND_Y],
 	[Vector2(-1, 2), Vector2(-1, 5), GROUND_Y],
@@ -47,10 +58,14 @@ const WALLS: Array = [
 	[Vector2(-1, 1), Vector2(-0.8, 1), GROUND_Y],
 	[Vector2(2.0, 1), Vector2(2.5, 1), GROUND_Y],
 	# ---- UPPER FLOOR (y0 = 2.7).
-	[Vector2(-7, -5), Vector2(7, -5), UPPER_Y],
+	# North wall (z=-5): frosted bathroom window gap x in [-5.0, -3.8].
+	[Vector2(-7, -5), Vector2(-5.0, -5), UPPER_Y],
+	[Vector2(-3.8, -5), Vector2(7, -5), UPPER_Y],
 	[Vector2(-7, 5), Vector2(7, 5), UPPER_Y],
 	[Vector2(-7, -5), Vector2(-7, 5), UPPER_Y],
-	[Vector2(7, -5), Vector2(7, 5), UPPER_Y],
+	# East wall (x=7): bedroom window gap z in [-3.1, -1.9].
+	[Vector2(7, -5), Vector2(7, -3.1), UPPER_Y],
+	[Vector2(7, -1.9), Vector2(7, 5), UPPER_Y],
 	# x=-1 (landing | upper hall). Opening z in [-0.5, 0.5].
 	[Vector2(-1, -5), Vector2(-1, -0.5), UPPER_Y],
 	[Vector2(-1, 0.5), Vector2(-1, 1), UPPER_Y],
@@ -79,6 +94,7 @@ var _blackout: bool = false
 var _stutter_until: float = 0.0
 var _door_pivot: Node3D = null
 var _door_open: bool = false
+var _doors: Dictionary = {}  # door_id -> {pivot, open, open_angle, interactable}.
 
 
 func _ready() -> void:
@@ -94,6 +110,9 @@ func _ready() -> void:
 	_build_landing()
 	_build_basement()
 	_build_front_door()
+	_build_doors()
+	_build_windows()
+	_build_backyard()
 	_build_interactables()
 	_build_lights()
 
@@ -160,10 +179,30 @@ func disable_all_interactables() -> void:
 		if child is Interactable:
 			var inter := child as Interactable
 			# The breaker box must stay usable: the breaker beat needs it
-			# AFTER the blackout disables everything else.
+			# AFTER the blackout disables everything else. Mechanical doors
+			# also stay usable (they are not story beats).
 			if inter.interact_id == "breaker_box":
 				continue
+			if String(inter.interact_id).begins_with("door_"):
+				continue
 			inter.disable()
+
+
+## Toggles a mechanical door (E to open/close). Smooth hinged swing; the
+## panel's collision rotates with it, so the doorway is walkable when open.
+func toggle_door(door_id: String) -> void:
+	if not _doors.has(door_id):
+		push_warning("ApartmentBuilder: unknown door '%s'." % door_id)
+		return
+	var d: Dictionary = _doors[door_id]
+	var is_open: bool = d["open"]
+	d["open"] = not is_open
+	var pivot: Node3D = d["pivot"]
+	var target: float = 0.0 if is_open else float(d["open_angle"])
+	var tw := create_tween()
+	tw.tween_property(pivot, "rotation:y", target, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var inter: Interactable = d["interactable"]
+	inter.prompt = "Close the door" if not is_open else "Open the door"
 
 
 # ------------------------------------------------------------------
@@ -201,6 +240,10 @@ func _make_materials() -> void:
 	_mats["lamp_glow"] = _mat(Color(1.0, 0.8, 0.55), 0.6, 0.0, Color(1.0, 0.7, 0.4))
 	_mats["tube_glow"] = _mat(Color(0.8, 1.0, 0.9), 0.6, 0.0, Color(0.5, 0.8, 0.7))
 	_mats["led_red"] = _mat(Color(0.5, 0.05, 0.05), 0.6, 0.0, Color(1.0, 0.1, 0.1))
+	_mats["glass"] = _mat(Color(0.05, 0.08, 0.13), 0.12, 0.85)
+	_mats["glass_frosted"] = _mat(Color(0.42, 0.47, 0.52), 0.65, 0.1)
+	_mats["dirt"] = _mat(Color(0.11, 0.085, 0.06), 1.0)
+	_mats["dirt_path"] = _mat(Color(0.16, 0.12, 0.08), 1.0)
 
 
 func _mat_by(mat_name: String) -> StandardMaterial3D:
@@ -274,6 +317,10 @@ func _add_interactable(interact_id: String, prompt: String, pos: Vector3, extent
 	inter.interact_id = interact_id
 	inter.prompt = prompt
 	inter.position = pos
+	# Hotspots live on physics layer 2: the player's InteractRay (mask 3)
+	# sees them, but the player body (mask 1) never collides with them.
+	inter.collision_layer = 2
+	inter.collision_mask = 0
 	var cs := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = extents * 2.0
@@ -293,17 +340,19 @@ func _build_shell() -> void:
 	# Basement floor slab (top at y=-2.7).
 	_add_box(Vector3(14.6, 0.15, 10.6), Vector3(0, -2.775, 0), "concrete")
 	# Ground slab = basement ceiling (top y=0). Hole over the basement stair:
-	# x in [0.7, 2.3], z in [-4.0, 0.9] (down-run at x in [0.9, 2.1]).
-	_add_box(Vector3(8.0, 0.15, 10.6), Vector3(-3.3, -0.075, 0), "floor")
-	_add_box(Vector3(5.0, 0.15, 10.6), Vector3(4.8, -0.075, 0), "floor")
-	_add_box(Vector3(1.6, 0.15, 4.4), Vector3(1.5, -0.075, 3.1), "floor")
-	_add_box(Vector3(1.6, 0.15, 1.3), Vector3(1.5, -0.075, -4.65), "floor")
+	# x in [0.85, 2.15], z in [-4.0, 0.9] (down-run at x in [0.9, 2.1],
+	# 0.05 m clearance each side so no visible slot).
+	_add_box(Vector3(8.15, 0.15, 10.6), Vector3(-3.225, -0.075, 0), "floor")
+	_add_box(Vector3(5.15, 0.15, 10.6), Vector3(4.725, -0.075, 0), "floor")
+	_add_box(Vector3(1.3, 0.15, 4.4), Vector3(1.5, -0.075, 3.1), "floor")
+	_add_box(Vector3(1.3, 0.15, 1.3), Vector3(1.5, -0.075, -4.65), "floor")
 	# Upper slab = ground ceiling (top y=2.7). Hole over the upper stair:
-	# x in [-0.9, 0.7], z in [-4.0, 0.9] (up-run at x in [-0.7, 0.5]).
-	_add_box(Vector3(6.4, 0.15, 10.6), Vector3(-4.1, 2.625, 0), "floor")
-	_add_box(Vector3(6.6, 0.15, 10.6), Vector3(4.0, 2.625, 0), "floor")
-	_add_box(Vector3(1.6, 0.15, 4.4), Vector3(-0.1, 2.625, 3.1), "floor")
-	_add_box(Vector3(1.6, 0.15, 1.3), Vector3(-0.1, 2.625, -4.65), "floor")
+	# x in [-0.75, 0.55], z in [-4.0, 0.9] (up-run at x in [-0.7, 0.5],
+	# 0.05 m clearance each side so no visible slot).
+	_add_box(Vector3(6.55, 0.15, 10.6), Vector3(-4.025, 2.625, 0), "floor")
+	_add_box(Vector3(6.75, 0.15, 10.6), Vector3(3.925, 2.625, 0), "floor")
+	_add_box(Vector3(1.3, 0.15, 4.4), Vector3(-0.1, 2.625, 3.1), "floor")
+	_add_box(Vector3(1.3, 0.15, 1.3), Vector3(-0.1, 2.625, -4.65), "floor")
 	# Roof slab (top y=5.4).
 	_add_box(Vector3(14.6, 0.15, 10.6), Vector3(0, 5.325, 0), "ceiling")
 
@@ -313,15 +362,15 @@ func _build_stairs() -> void:
 	# x in [0.9, 2.1]. Both run z: 0.9 -> -4.0, rise 2.7 (~29 deg).
 	_build_stair_run(-0.1, true)
 	_build_stair_run(1.5, false)
-	# Guard walls around the stairwell holes.
-	# Upper floor, hole x in [-0.9, 0.7], z in [-4.0, 0.9] (north edge is the stair exit).
-	_add_guard(Vector2(-0.9, -4.0), Vector2(-0.9, 0.9), UPPER_Y)
-	_add_guard(Vector2(0.7, -4.0), Vector2(0.7, 0.9), UPPER_Y)
-	_add_guard(Vector2(-0.9, 0.9), Vector2(0.7, 0.9), UPPER_Y)
-	# Ground floor, hole x in [0.7, 2.3], z in [-4.0, 0.9] (south edge is the stair entry).
-	_add_guard(Vector2(0.7, -4.0), Vector2(0.7, 0.9), GROUND_Y)
-	_add_guard(Vector2(2.3, -4.0), Vector2(2.3, 0.9), GROUND_Y)
-	_add_guard(Vector2(0.7, -4.0), Vector2(2.3, -4.0), GROUND_Y)
+	# Guard walls around the stairwell holes (1 m, on the slab edges).
+	# Upper floor, hole x in [-0.75, 0.55], z in [-4.0, 0.9] (north edge is the stair exit).
+	_add_guard(Vector2(-0.75, -4.0), Vector2(-0.75, 0.9), UPPER_Y)
+	_add_guard(Vector2(0.55, -4.0), Vector2(0.55, 0.9), UPPER_Y)
+	_add_guard(Vector2(-0.75, 0.9), Vector2(0.55, 0.9), UPPER_Y)
+	# Ground floor, hole x in [0.85, 2.15], z in [-4.0, 0.9] (south edge is the stair entry).
+	_add_guard(Vector2(0.85, -4.0), Vector2(0.85, 0.9), GROUND_Y)
+	_add_guard(Vector2(2.15, -4.0), Vector2(2.15, 0.9), GROUND_Y)
+	_add_guard(Vector2(0.85, -4.0), Vector2(2.15, -4.0), GROUND_Y)
 
 
 func _build_stair_run(x_center: float, up: bool) -> void:
@@ -402,17 +451,17 @@ func _build_living_room() -> void:
 
 
 func _build_kitchen() -> void:
-	# Counter run along the north wall.
-	_add_box(Vector3(3.4, 0.9, 0.65), Vector3(4.9, 0.45, -4.62), "wood")
-	# Stove.
-	_add_box(Vector3(0.7, 0.9, 0.65), Vector3(3.35, 0.45, -4.62), "dark")
+	# Counter run along the north wall, west of the back door (door x in [4.0, 5.2]).
+	_add_box(Vector3(1.4, 0.9, 0.65), Vector3(3.2, 0.45, -4.62), "wood")
+	# Stove, east of the back door.
+	_add_box(Vector3(0.7, 0.9, 0.65), Vector3(6.6, 0.45, -4.62), "dark")
 	# Fridge with the note on its front (front face at z = -4.15).
-	_add_box(Vector3(0.85, 1.9, 0.8), Vector3(6.1, 0.95, -4.55), "appliance")
-	_add_box(Vector3(0.05, 0.5, 0.06), Vector3(5.77, 1.2, -4.13), "metal", 0.0, false)
-	_add_quad(Vector2(0.28, 0.34), Vector3(6.1, 1.35, -4.14), "paper")
+	_add_box(Vector3(0.85, 1.9, 0.8), Vector3(5.725, 0.95, -4.55), "appliance")
+	_add_box(Vector3(0.05, 0.5, 0.06), Vector3(5.395, 1.2, -4.13), "metal", 0.0, false)
+	_add_quad(Vector2(0.28, 0.34), Vector3(5.725, 1.35, -4.14), "paper")
 	# The knife, displayed in the middle of the counter.
-	_add_box(Vector3(0.28, 0.015, 0.045), Vector3(4.9, 0.93, -4.62), "metal", 0.5, false)
-	_add_box(Vector3(0.12, 0.03, 0.05), Vector3(4.72, 0.93, -4.55), "dark", 0.5, false)
+	_add_box(Vector3(0.28, 0.015, 0.045), Vector3(3.2, 0.93, -4.62), "metal", 0.5, false)
+	_add_box(Vector3(0.12, 0.03, 0.05), Vector3(3.02, 0.93, -4.55), "dark", 0.5, false)
 
 
 func _build_bedroom() -> void:
@@ -475,6 +524,9 @@ func _build_front_door() -> void:
 	# Hinged at the west edge of the doorway (x=0.2, z=5.0); the panel extends
 	# +x when closed. Slightly ajar at start; open_door() swings it ~106
 	# degrees inward, into the foyer.
+	# Lintel above the door: the wall gap is full height (2.7 m) but the panel
+	# is only 2.1 m, so close the 0.6 m strip above it.
+	_add_box(Vector3(1.2, 0.6, WALL_T), Vector3(0.8, 2.4, 5.0), "wall")
 	_door_pivot = Node3D.new()
 	_door_pivot.position = Vector3(0.2, 0, 5.0)
 	_door_pivot.rotation.y = 0.15
@@ -488,13 +540,173 @@ func _build_front_door() -> void:
 	_door_pivot.add_child(mi)
 
 
+# ------------------------------------------------------------------
+# Windows (fixed glass). The WALLS table leaves the openings; this fills
+# below-sill / above-header and adds frame + glass.
+# [cx, cz, width, y0, sill_h, header_h, along_x, frosted]
+# ------------------------------------------------------------------
+
+const WINDOWS: Array = [
+	[-7.0, -3.0, 1.2, GROUND_Y, 1.0, 2.2, false, false],  # living west 1
+	[-7.0, 1.0, 1.2, GROUND_Y, 1.0, 2.2, false, false],   # living west 2
+	[7.0, -2.0, 1.2, GROUND_Y, 1.0, 2.2, false, false],    # kitchen east
+	[-1.9, 5.0, 1.2, GROUND_Y, 1.0, 2.2, true, false],     # south, west of door
+	[3.7, 5.0, 1.2, GROUND_Y, 1.0, 2.2, true, false],      # south, east of door
+	[7.0, -2.5, 1.2, UPPER_Y, 1.0, 2.2, false, false],     # bedroom east
+	[-4.4, -5.0, 1.2, UPPER_Y, 1.5, 2.3, true, true],      # bathroom north, frosted
+]
+
+
+func _build_windows() -> void:
+	for w in WINDOWS:
+		_add_window(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7])
+
+
+func _add_window(cx: float, cz: float, width: float, y0: float, sill_h: float, header_h: float, along_x: bool, frosted: bool) -> void:
+	var sill_y := y0 + sill_h
+	var header_y := y0 + header_h
+	var mid_y := (sill_y + header_y) * 0.5
+	var glass_h := header_h - sill_h - 0.1
+	var glass_w := width - 0.1
+	var ft := 0.09  # frame trim thickness
+	if along_x:
+		# Wall runs along x (z = const).
+		_add_box(Vector3(width, sill_h, WALL_T), Vector3(cx, y0 + sill_h * 0.5, cz), "wall")
+		_add_box(Vector3(width, 2.7 - header_h, WALL_T), Vector3(cx, y0 + header_h + (2.7 - header_h) * 0.5, cz), "wall")
+		_add_box(Vector3(width + 0.18, ft, WALL_T + 0.06), Vector3(cx, sill_y, cz), "wood")
+		_add_box(Vector3(width + 0.18, ft, WALL_T + 0.06), Vector3(cx, header_y, cz), "wood")
+		_add_box(Vector3(ft, header_h - sill_h, WALL_T + 0.06), Vector3(cx - width * 0.5, mid_y, cz), "wood")
+		_add_box(Vector3(ft, header_h - sill_h, WALL_T + 0.06), Vector3(cx + width * 0.5, mid_y, cz), "wood")
+		_add_box(Vector3(glass_w, glass_h, 0.04), Vector3(cx, mid_y, cz), "glass_frosted" if frosted else "glass", 0.0, false)
+		# Center mullion.
+		_add_box(Vector3(0.06, glass_h, 0.06), Vector3(cx, mid_y, cz), "wood", 0.0, false)
+	else:
+		# Wall runs along z (x = const).
+		_add_box(Vector3(WALL_T, sill_h, width), Vector3(cx, y0 + sill_h * 0.5, cz), "wall")
+		_add_box(Vector3(WALL_T, 2.7 - header_h, width), Vector3(cx, y0 + header_h + (2.7 - header_h) * 0.5, cz), "wall")
+		_add_box(Vector3(WALL_T + 0.06, ft, width + 0.18), Vector3(cx, sill_y, cz), "wood")
+		_add_box(Vector3(WALL_T + 0.06, ft, width + 0.18), Vector3(cx, header_y, cz), "wood")
+		_add_box(Vector3(WALL_T + 0.06, header_h - sill_h, ft), Vector3(cx, mid_y, cz - width * 0.5), "wood")
+		_add_box(Vector3(WALL_T + 0.06, header_h - sill_h, ft), Vector3(cx, mid_y, cz + width * 0.5), "wood")
+		_add_box(Vector3(0.04, glass_h, glass_w), Vector3(cx, mid_y, cz), "glass_frosted" if frosted else "glass", 0.0, false)
+		# Center mullion.
+		_add_box(Vector3(0.06, glass_h, 0.06), Vector3(cx, mid_y, cz), "wood", 0.0, false)
+
+
+# ------------------------------------------------------------------
+# Backyard + outhouse
+# ------------------------------------------------------------------
+
+func _build_backyard() -> void:
+	# Dirt yard north of the house.
+	_add_box(Vector3(16.0, 0.15, 7.0), Vector3(1.0, -0.075, -8.5), "dirt")
+	# Worn path from the back door to the outhouse.
+	_add_box(Vector3(1.2, 0.03, 4.2), Vector3(5.4, 0.015, -7.1), "dirt_path", 0.0, false)
+	# Perimeter fence (1.1 m) so the player can't walk off into the dark.
+	# North, west, east; the house itself closes the south side.
+	_add_box(Vector3(16.0, 1.1, 0.1), Vector3(1.0, 0.55, -12.0), "wood")
+	_add_box(Vector3(0.1, 1.1, 7.0), Vector3(-7.0, 0.55, -8.5), "wood")
+	_add_box(Vector3(0.1, 1.1, 7.0), Vector3(9.0, 0.55, -8.5), "wood")
+	# Fence posts.
+	for fx in [-7.0, -3.0, 1.0, 5.0, 9.0]:
+		_add_box(Vector3(0.14, 1.25, 0.14), Vector3(fx, 0.625, -12.0), "wood")
+	# Outhouse: 2 x 2.4 m shed, 2.2 m walls, slanted roof. Door on south face.
+	var wx0 := 5.0
+	var wx1 := 7.0
+	var wz0 := -11.4
+	var wz1 := -9.0
+	var wh := 2.2
+	var wt := 0.12
+	# North, west, east walls (full).
+	_add_box(Vector3(wx1 - wx0, wh, wt), Vector3(6.0, wh * 0.5, wz0), "wood")
+	_add_box(Vector3(wt, wh, wz1 - wz0), Vector3(wx0, wh * 0.5, -10.2), "wood")
+	_add_box(Vector3(wt, wh, wz1 - wz0), Vector3(wx1, wh * 0.5, -10.2), "wood")
+	# South wall with door gap x in [5.5, 6.5].
+	_add_box(Vector3(0.5, wh, wt), Vector3(5.25, wh * 0.5, wz1), "wood")
+	_add_box(Vector3(0.5, wh, wt), Vector3(6.75, wh * 0.5, wz1), "wood")
+	# Lintel above the door.
+	_add_box(Vector3(1.0, 0.2, wt), Vector3(6.0, 2.1, wz1), "wood")
+	# Slanted roof (single slab, slight pitch).
+	var roof := _add_box(Vector3(2.5, 0.08, 2.9), Vector3(6.0, 2.32, -10.2), "wood", 0.0, false)
+	roof.rotation.x = 0.09
+	# Interior bench (the seat).
+	_add_box(Vector3(0.7, 0.45, 0.55), Vector3(6.0, 0.225, -10.7), "wood")
+	# The door itself: hinge west jamb, swings south outward.
+	_build_door("door_outhouse", Vector3(5.5, 0.0, -9.0),
+		Vector3(0.96, 2.0, 0.08), Vector3(0.48, 1.0, 0), -1.75,
+		Vector3(6.0, 1.2, -8.55))
+
+
+# ------------------------------------------------------------------
+# Mechanical doors (E to open/close). Hinged panels; not story beats.
+# ------------------------------------------------------------------
+
+func _build_door(door_id: String, hinge: Vector3, panel_size: Vector3, panel_offset: Vector3, open_angle: float, prompt_pos: Vector3) -> void:
+	# hinge: pivot position at floor level. When closed (rotation 0) the panel
+	# spans the doorway; open_angle is the pivot's rotation.y when open.
+	var pivot := Node3D.new()
+	pivot.position = hinge
+	add_child(pivot)
+	var panel := StaticBody3D.new()
+	panel.position = panel_offset
+	pivot.add_child(panel)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = panel_size
+	mi.mesh = bm
+	mi.material_override = _mat_by("door")
+	panel.add_child(mi)
+	var cs := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = panel_size
+	cs.shape = shape
+	panel.add_child(cs)
+	# Small knob near the panel's free edge (visual only).
+	var knob := MeshInstance3D.new()
+	var km := BoxMesh.new()
+	km.size = Vector3(0.07, 0.07, 0.12)
+	knob.mesh = km
+	knob.material_override = _mat_by("metal")
+	if panel_size.x > panel_size.z:
+		knob.position = Vector3(panel_size.x * 0.5 - 0.12, 0.0, 0.0)
+	else:
+		knob.position = Vector3(0.0, 0.0, panel_size.z * 0.5 - 0.12)
+	panel.add_child(knob)
+	var inter := _add_interactable(door_id, "Open the door", prompt_pos, Vector3(0.3, 0.3, 0.3))
+	inter.one_shot = false
+	_doors[door_id] = {"pivot": pivot, "open": false, "open_angle": open_angle, "interactable": inter}
+
+
+func _build_doors() -> void:
+	# Bedroom door (upper floor, x=2.5 wall, doorway z in [-0.6, 0.6]).
+	# Hinge on the south jamb; swings east into the bedroom.
+	_add_box(Vector3(0.18, 0.6, 1.2), Vector3(2.5, UPPER_Y + 2.4, 0.0), "wall")
+	_build_door("door_bedroom", Vector3(2.5, UPPER_Y, -0.6),
+		Vector3(0.08, 2.1, 1.16), Vector3(0, 1.05, 0.58), 1.75,
+		Vector3(2.05, UPPER_Y + 1.5, 0.0))
+	# Basement door: freestanding frame at the top of the down-run (z=0.9).
+	# Hinge on the west jamb; swings south into the stair hall, clear of the ramp.
+	_add_box(Vector3(0.12, 2.1, 0.12), Vector3(0.9, 1.05, 0.9), "wood")
+	_add_box(Vector3(0.12, 2.1, 0.12), Vector3(2.1, 1.05, 0.9), "wood")
+	_add_box(Vector3(1.32, 0.6, 0.12), Vector3(1.5, 2.4, 0.9), "wood")
+	_build_door("door_basement", Vector3(0.9, 0.0, 0.9),
+		Vector3(1.16, 2.1, 0.08), Vector3(0.58, 1.05, 0), -1.75,
+		Vector3(1.5, 1.5, 1.45))
+	# Back door (north wall, x in [4.0, 5.2]). Hinge on the west jamb;
+	# swings north out into the backyard.
+	_add_box(Vector3(1.2, 0.6, WALL_T), Vector3(4.6, 2.4, -5.0), "wall")
+	_build_door("door_back", Vector3(4.0, 0.0, -5.0),
+		Vector3(1.16, 2.1, 0.08), Vector3(0.58, 1.05, 0), 1.75,
+		Vector3(4.6, 1.5, -4.55))
+
+
 func _build_interactables() -> void:
 	# interact_id must match a key in StoryData.get_trigger_beats().
-	_add_interactable("fridge_note", "Read the note", Vector3(6.1, 1.35, -3.95), Vector3(0.4, 0.4, 0.3))
+	_add_interactable("fridge_note", "Read the note", Vector3(5.725, 1.35, -3.95), Vector3(0.4, 0.4, 0.3))
 	_add_interactable("bedroom_photo", "Look at the photo", Vector3(4.3, UPPER_Y + 0.85, -4.5), Vector3(0.35, 0.35, 0.35))
 	_add_interactable("bedroom_closet", "Open the closet", Vector3(6.35, UPPER_Y + 1.1, -4.15), Vector3(0.7, 0.8, 0.3))
 	_add_interactable("bathroom_mirror", "Look in the mirror", Vector3(-6.3, UPPER_Y + 1.6, -4.1), Vector3(0.45, 0.55, 0.35))
-	_add_interactable("kitchen_knife", "Look at the knife", Vector3(4.9, 1.1, -4.25), Vector3(0.5, 0.4, 0.4))
+	_add_interactable("kitchen_knife", "Look at the knife", Vector3(3.2, 1.1, -4.25), Vector3(0.5, 0.4, 0.4))
 	_add_interactable("breaker_box", "Flip the breaker", Vector3(6.4, BASE_Y + 1.35, -1.0), Vector3(0.35, 0.45, 0.35))
 
 

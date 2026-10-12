@@ -84,17 +84,28 @@ stairwell holes; guard walls (1 m) ring the holes on each floor.
   - Up-run x in [-0.7, 0.5] → upper hall. Down-run x in [0.9, 2.1] → basement.
   - Visual steps are thin boxes with NO collision; each run has ONE sloped
     ramp StaticBody3D the player walks on.
+  - Slab holes fit the runs snugly (0.05 m clearance/side); 1 m guard walls
+    ring the holes on each floor (open only at stair entry/exit).
+- **Mechanical doors** (E toggles open/close, not story beats; work during
+  blackout): `door_bedroom` (upper x=2.5 wall), `door_basement` (stair hall
+  frame at down-run top), `door_back` (north wall x in [4.0, 5.2], swings out),
+  `door_outhouse` (outhouse south face). Front door keeps story-driven behavior.
+- **Windows** (fixed, night-dark glass): living west wall x2, kitchen east x1,
+  south wall x2 flanking front door, bedroom east x1, bathroom north x1 frosted.
 - **Upper**: hall (x in [-1, 2.5], z in [-5, 1]), bedroom (east, x in [2.5, 7]:
   bed, nightstand + photo, closet), bathroom (north-west, x in [-7, -3.5],
   z in [-5, -1]: sink + mirror, toilet, tub), open landing (south).
 - **Basement**: open dim space, support columns, storage boxes, breaker box on
   the east wall (x≈6.8, z=-1.0) with a red LED so it can be found in the dark.
+- **Backyard** (outside, north): dirt yard x in [-7, 9], z in [-12, -5],
+  perimeter fence, worn path from the back door to a wooden outhouse
+  (x in [5, 7], z in [-11.4, -9], slanted roof, bench inside, working door).
 
-Interactable positions: `fridge_note` (6.1, 1.35, -3.95), `kitchen_knife`
-(4.9, 1.1, -4.25), `bedroom_photo` (4.3, 3.55, -4.5), `bedroom_closet` (6.35,
+Interactable positions: `fridge_note` (5.725, 1.35, -3.95), `kitchen_knife`
+(3.2, 1.1, -4.25), `bedroom_photo` (4.3, 3.55, -4.5), `bedroom_closet` (6.35,
 3.8, -4.15), `bathroom_mirror` (-6.3, 4.3, -4.1), `breaker_box` (6.4, -1.35,
--1.0). The blackout disables every interactable EXCEPT `breaker_box`, which
-the `breaker` beat needs afterwards.
+-1.0). The blackout disables every interactable EXCEPT `breaker_box` (which
+the `breaker` beat needs afterwards) and the mechanical `door_*` doors.
 
 ## Data flow example (the knife)
 
