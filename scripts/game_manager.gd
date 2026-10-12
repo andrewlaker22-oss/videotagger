@@ -50,6 +50,7 @@ var _hide_entry_pos: Vector3 = Vector3.ZERO
 var _unhide_busy: bool = false
 
 var _beat: Dictionary = {}
+var _beat_id := ""
 var _line_index: int = 0
 
 @onready var player: PlayerController = $Player
@@ -59,6 +60,9 @@ var _line_index: int = 0
 @onready var phone_ui: PhoneUI = $PhoneUI
 @onready var chores: ChoreManager = $ChoreManager
 @onready var unpack: UnpackManager = $UnpackManager
+@onready var menu: MenuUI = $MenuUI
+@onready var settings: SettingsManager = $SettingsManager
+@onready var saves: SaveManager = $SaveManager
 @onready var world_env: WorldEnvironment = $WorldEnvironment
 
 
@@ -74,6 +78,13 @@ func _ready() -> void:
 	unpack.completed.connect(_on_unpack_completed)
 	phone_ui.quick_reply_tapped.connect(_on_quick_reply_tapped)
 	phone_ui.load_threads(StoryData.get_phone_threads())
+	settings.setup(player, audio)
+	settings.load_and_apply()
+	menu.setup(settings, saves)
+	menu.resume_pressed.connect(_close_menu)
+	menu.save_slot_chosen.connect(_on_menu_save_slot)
+	menu.load_slot_chosen.connect(_on_menu_load_slot)
+	menu.quit_pressed.connect(_on_menu_quit)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	ui.fade_from_black()
 	await get_tree().create_timer(1.4).timeout
@@ -89,7 +100,7 @@ func _unhandled_input(event: InputEvent) -> void:
 					if state == State.ENDING:
 						get_tree().reload_current_scene()
 				KEY_TAB:
-					if state == State.EXPLORE:
+					if state == State.EXPLORE and not menu.is_open():
 						if chores.in_wash_mode:
 							chores.exit_wash_mode()
 						else:
@@ -101,6 +112,12 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_viewport().set_input_as_handled()
 					elif chores.in_wash_mode:
 						chores.exit_wash_mode()
+						get_viewport().set_input_as_handled()
+					elif menu.is_open():
+						_close_menu()
+						get_viewport().set_input_as_handled()
+					elif state == State.EXPLORE:
+						_open_menu()
 						get_viewport().set_input_as_handled()
 
 
@@ -118,6 +135,7 @@ func start_beat(beat_id: String) -> void:
 	if is_player_hidden():
 		_unhide(true)
 	_beat = beats[beat_id]
+	_beat_id = beat_id
 	phone_ui.advance_clock()
 	for effect in _beat.get("effects", []):
 		if effect is Dictionary:
@@ -456,13 +474,177 @@ func _close_phone() -> void:
 
 
 # ------------------------------------------------------------------
+# Pause menu (Esc during EXPLORE). The game keeps rendering behind it
+# (like the phone) — input is locked and the mouse is released.
+# ------------------------------------------------------------------
+
+func _open_menu() -> void:
+	if menu.is_open() or state != State.EXPLORE:
+		return
+	ui.hide_prompt()
+	menu.open()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	player.control_locked = true
+	player.allow_capture = false
+	audio.play_sfx("menu_open")
+
+
+func _close_menu() -> void:
+	if not menu.is_open():
+		return
+	menu.close()
+	player.control_locked = false
+	player.allow_capture = true
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	audio.play_sfx("menu_close")
+
+
+func _on_menu_quit() -> void:
+	get_tree().quit()
+
+
+# ------------------------------------------------------------------
+# Save / load. The pause menu only opens in EXPLORE, so saves always
+# capture free-roam state; the player never loads hidden.
+# ------------------------------------------------------------------
+
+func _on_menu_save_slot(slot: int) -> void:
+	var data := _collect_save_data()
+	if saves.write_slot(slot, data):
+		ui.show_toast("Saved to slot %d." % slot)
+		audio.play_sfx("ding")
+	else:
+		ui.show_toast("Save failed.")
+	menu.refresh_slots()
+
+
+func _on_menu_load_slot(slot: int) -> void:
+	var st := saves.slot_state(slot)
+	if st == "empty":
+		ui.show_toast("Empty slot.")
+		return
+	if st == "corrupt":
+		ui.show_toast("Save corrupted.")
+		return
+	var d := saves.read_slot(slot)
+	if d.is_empty():
+		ui.show_toast("Save corrupted.")
+		return
+	_apply_save_data(d)
+	_close_menu()
+	ui.show_toast("Loaded.")
+	audio.play_sfx("ding")
+
+
+func _collect_save_data() -> Dictionary:
+	var clean_flags := {}
+	for k in flags.keys():
+		var v = flags[k]
+		if v is bool or v is int or v is float or v is String:
+			clean_flags[str(k)] = v
+		else:
+			clean_flags[str(k)] = str(v)
+	var disabled: Array = []
+	for n in get_tree().get_nodes_in_group("interactable"):
+		var inter := n as Interactable
+		if inter != null and not inter.enabled:
+			disabled.append(String(inter.interact_id))
+	return {
+		"version": 1,
+		"saved_at": _save_timestamp(),
+		"objective": ui.get_objective(),
+		"flags": clean_flags,
+		"state": "EXPLORE",
+		"beat_id": "",
+		"line_index": 0,
+		"player": {
+			"pos": [player.global_position.x, player.global_position.y, player.global_position.z],
+			"yaw": player.rotation.y,
+			"pitch": player.head.rotation.x,
+		},
+		"chores": chores.serialize(),
+		"unpack": unpack.serialize(),
+		"phone": phone_ui.serialize(),
+		"world": apartment.serialize_world(),
+		"disabled_hotspots": disabled,
+	}
+
+
+func _apply_save_data(d: Dictionary) -> void:
+	# Flags first — everything else keys off them.
+	flags.clear()
+	for k in (d.get("flags", {}) as Dictionary).keys():
+		flags[str(k)] = (d["flags"] as Dictionary)[k]
+	# Phone threads + clock.
+	phone_ui.deserialize(d.get("phone", {}))
+	# World: blackout, doors, front door.
+	var world: Dictionary = d.get("world", {})
+	apartment.deserialize_world(world)
+	if bool(world.get("blackout", false)):
+		apartment.disable_all_interactables()
+		if world_env and world_env.environment:
+			world_env.environment.ambient_light_energy = 0.05
+	# Checklist UI + quick-reply + unpack unlock (all flag-driven).
+	_refresh_checklist()
+	# Chore + unpack state (each manager owns its visuals).
+	chores.deserialize(d.get("chores", {}))
+	unpack.deserialize(d.get("unpack", {}))
+	# The bedroom hide hotspot only exists after its story beat was consumed.
+	if bool(flags.get("closet_beat_done", false)):
+		_retire_interactable("bedroom_closet")
+		apartment.add_hide_hotspot("bedroom_closet")
+	# Consumed one-shots and other disabled hotspots.
+	for hid in d.get("disabled_hotspots", []):
+		_disable_interactable(String(hid))
+	# Chores HUD line.
+	ui.set_chores(chores.get_checklist())
+	# Player transform. Never restore hidden state.
+	var p: Dictionary = d.get("player", {})
+	var pos: Array = p.get("pos", [0.8, 0.1, 5.9])
+	player.global_position = Vector3(float(pos[0]), float(pos[1]), float(pos[2]))
+	player.rotation.y = float(p.get("yaw", 0.0))
+	player.head.rotation.x = float(p.get("pitch", 0.0))
+	player.velocity = Vector3.ZERO
+	# Clean EXPLORE re-entry. No checklist/chores re-offer: the restored
+	# flags already say what's done.
+	if is_player_hidden():
+		_unhide(true)
+	state = State.EXPLORE
+	player.control_locked = false
+	player.allow_capture = true
+	player.movement_locked = false
+	player.clear_yaw_limits()
+	ui.hide_dialogue()
+	ui.hide_choices()
+	ui.set_letterbox(false)
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	# Restore the visible objective last, after the trackers rebuilt.
+	ui.set_objective(String(d.get("objective", "")))
+
+
+func _save_timestamp() -> String:
+	var dt := Time.get_datetime_dict_from_system()
+	var months := ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+	var h := int(dt["hour"])
+	var suffix := "AM"
+	if h >= 12:
+		suffix = "PM"
+		if h > 12:
+			h -= 12
+	if h == 0:
+		h = 12
+	return "%s %d, %d:%02d %s" % [months[int(dt["month"]) - 1], int(dt["day"]), h, int(dt["minute"]), suffix]
+
+
+# ------------------------------------------------------------------
 # Input routing (raw signals from the Player)
 # ------------------------------------------------------------------
 
 func _on_primary_action() -> void:
 	match state:
 		State.EXPLORE:
-			if not phone_ui.is_open() and not chores.in_wash_mode:
+			if not phone_ui.is_open() and not chores.in_wash_mode and not menu.is_open():
 				_try_interact()
 		State.DIALOGUE:
 			_advance_line()
@@ -517,6 +699,7 @@ func _try_interact() -> void:
 	# The bedroom wardrobe's story beat is consumed: retire its hotspot
 	# (including ray occlusion) and create the Hide hotspot for the door.
 	if inter.interact_id == "bedroom_closet":
+		flags["closet_beat_done"] = true
 		_retire_interactable("bedroom_closet")
 		apartment.add_hide_hotspot("bedroom_closet")
 	start_beat(beat_id)
