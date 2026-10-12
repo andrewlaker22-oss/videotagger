@@ -99,6 +99,9 @@ var _trash_bag_nodes: Dictionary = {}  # bag_id -> Array of prop nodes.
 var _dish_plates: Array = []  # dirty dish bodies, in wash order.
 var _rack_slots: Array = []  # Vector3 slots in the drying rack.
 var _flicker: Dictionary = {}  # light index -> {"until": float} (horror flicker).
+var _unpack_lids: Dictionary = {}  # box_id -> lid StaticBody3D (hidden on open).
+var _unpack_markers: Dictionary = {}  # zone_id -> glowing marker MeshInstance3D.
+var _unpack_marker_mat: StandardMaterial3D  # shared pulsing emission material.
 
 
 func _ready() -> void:
@@ -119,6 +122,7 @@ func _ready() -> void:
 	_build_backyard()
 	_build_interactables()
 	_build_chores()
+	_build_unpack()
 	_build_lights()
 
 
@@ -162,6 +166,9 @@ func _process(delta: float) -> void:
 					if sin(t * 8.3 + phase * 2.7) > 0.93:
 						e *= 0.08
 		l.light_energy = e
+	# Pulse the unpacking zone markers (shared emissive material).
+	if _unpack_marker_mat != null:
+		_unpack_marker_mat.emission_energy_multiplier = 1.2 + 0.8 * sin(t * 5.0)
 
 
 # ------------------------------------------------------------------
@@ -174,6 +181,15 @@ func open_front_door() -> void:
 	_door_open = true
 	var tw := create_tween()
 	tw.tween_property(_door_pivot, "rotation:y", 1.85, 1.6).set_trans(Tween.TRANS_SINE)
+
+
+## Swings the front door shut again (used when Mara locks up).
+func close_front_door() -> void:
+	if _door_pivot == null:
+		return
+	_door_open = false
+	var tw := create_tween()
+	tw.tween_property(_door_pivot, "rotation:y", 0.15, 1.2).set_trans(Tween.TRANS_SINE)
 
 
 func set_blackout(value: bool) -> void:
@@ -213,6 +229,15 @@ func disable_all_interactables() -> void:
 			if String(inter.interact_id).begins_with("trash_"):
 				continue
 			if inter.interact_id == "sink":
+				continue
+			# Unpacking hotspots (unpack_*, uzone_*) persist too — the opening
+			# gameplay never blocks the story, and its state survives beats.
+			if String(inter.interact_id).begins_with("unpack_"):
+				continue
+			if String(inter.interact_id).begins_with("uzone_"):
+				continue
+			# The front-door lock persists too — the checklist survives beats.
+			if inter.interact_id == "front_door_lock":
 				continue
 			inter.disable()
 
@@ -273,6 +298,10 @@ func _make_materials() -> void:
 	_mats["glass_frosted"] = _mat(Color(0.42, 0.47, 0.52), 0.65, 0.1)
 	_mats["dirt"] = _mat(Color(0.11, 0.085, 0.06), 1.0)
 	_mats["dirt_path"] = _mat(Color(0.16, 0.12, 0.08), 1.0)
+	_mats["cardboard"] = _mat(Color(0.52, 0.4, 0.26), 0.92)
+	_mats["cardboard_dark"] = _mat(Color(0.38, 0.29, 0.18), 0.92)
+	_mats["clay"] = _mat(Color(0.58, 0.3, 0.2), 0.9)
+	_mats["leaf"] = _mat(Color(0.14, 0.34, 0.14), 0.95)
 
 
 func _mat_by(mat_name: String) -> StandardMaterial3D:
@@ -762,6 +791,9 @@ func _build_interactables() -> void:
 	_add_interactable("bathroom_mirror", "Look in the mirror", Vector3(-6.3, UPPER_Y + 1.6, -4.1), Vector3(0.45, 0.55, 0.35))
 	_add_interactable("kitchen_knife", "Look at the knife", Vector3(3.2, 1.1, -4.25), Vector3(0.5, 0.4, 0.4))
 	_add_interactable("breaker_box", "Flip the breaker", Vector3(6.4, BASE_Y + 1.35, -1.0), Vector3(0.35, 0.45, 0.35))
+	# Checklist hotspot (routed to the GameManager, not a story beat).
+	var lock := _add_interactable("front_door_lock", "Lock the front door", Vector3(0.8, 1.2, 4.7), Vector3(0.4, 0.4, 0.4))
+	lock.one_shot = false
 
 
 # ------------------------------------------------------------------
@@ -827,6 +859,194 @@ func dish_to_rack(i: int) -> void:
 	tw.set_parallel(true)
 	tw.tween_property(plate, "position", _rack_slots[i], 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(plate, "rotation:x", 1.35, 0.6)
+
+
+# ------------------------------------------------------------------
+# Unpacking (core opening gameplay). Boxes + placement zones; the
+# UnpackManager owns the state machine, this builds the set dressing.
+# ------------------------------------------------------------------
+
+# [box_id, label, position] — the four labeled boxes.
+const UNPACK_BOXES: Array = [
+	["unpack_box_kitchen", "KITCHEN", Vector3(-0.2, 0.0, 2.2)],
+	["unpack_box_books", "BOOKS", Vector3(-2.0, 0.0, 1.2)],
+	["unpack_box_bedroom", "BEDROOM", Vector3(1.6, 0.0, 2.6)],
+	["unpack_box_bath", "BATH", Vector3(-3.2, 0.0, 0.6)],
+]
+# The unmarked box sits slightly apart from the others.
+const UNPACK_PLAIN_POS := Vector3(-4.4, 0.0, 2.2)
+
+# [zone_id, marker/interactable position].
+const UNPACK_ZONES: Array = [
+	["uzone_kitchen_sill", Vector3(6.9, 1.07, -2.0)],
+	["uzone_kitchen_stove", Vector3(6.6, 0.92, -4.62)],
+	["uzone_living_shelf", Vector3(-6.7, 1.22, -1.5)],
+	["uzone_living_sill_south", Vector3(-1.9, 1.07, 4.95)],
+	["uzone_living_sill_west", Vector3(-6.9, 1.07, 1.0)],
+	["uzone_bed_nightstand", Vector3(4.3, 3.27, -4.42)],
+	["uzone_bed_bed", Vector3(5.5, 3.34, -2.2)],
+	["uzone_bath_tub", Vector3(-4.0, 3.27, -2.0)],
+	["uzone_bath_sink", Vector3(-6.3, 3.57, -4.4)],
+	["uzone_bath_toilet", Vector3(-5.2, 3.62, -4.75)],
+]
+
+
+func _build_unpack() -> void:
+	# Low bookcase in the living room (one unpacking destination).
+	_add_box(Vector3(0.35, 1.2, 1.2), Vector3(-6.7, 0.6, -1.5), "wood")
+	# The four labeled boxes + the unmarked one.
+	for b in UNPACK_BOXES:
+		var bid: String = b[0]
+		var blabel: String = b[1]
+		var bpos: Vector3 = b[2]
+		_build_unpack_box(bid, blabel, bpos)
+	_build_unpack_box("unpack_box_plain", "", UNPACK_PLAIN_POS)
+	# Placement-zone markers (hidden until the carried item needs them).
+	_unpack_marker_mat = _mat(Color(0.35, 0.75, 1.0), 0.5, 0.0, Color(0.3, 0.7, 1.0))
+	for z in UNPACK_ZONES:
+		var zid: String = z[0]
+		var zpos: Vector3 = z[1]
+		var disc := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.2
+		cm.bottom_radius = 0.2
+		cm.height = 0.02
+		disc.mesh = cm
+		disc.material_override = _unpack_marker_mat
+		disc.position = zpos
+		disc.visible = false
+		add_child(disc)
+		_unpack_markers[zid] = disc
+		var zinter := _add_interactable(zid, "Place it here", zpos, Vector3(0.4, 0.32, 0.4))
+		zinter.one_shot = false
+		zinter.disable()
+
+
+func _build_unpack_box(box_id: String, label: String, pos: Vector3) -> void:
+	# Open-top cardboard box: floor + 4 walls + dark interior, lid on top.
+	var t := 0.04
+	var w := 0.55
+	var h := 0.42
+	_add_box(Vector3(w, t, w), pos + Vector3(0, t * 0.5, 0), "cardboard")
+	_add_box(Vector3(w, h, t), pos + Vector3(0, h * 0.5, w * 0.5 - t * 0.5), "cardboard")
+	_add_box(Vector3(w, h, t), pos + Vector3(0, h * 0.5, -w * 0.5 + t * 0.5), "cardboard")
+	_add_box(Vector3(t, h, w), pos + Vector3(w * 0.5 - t * 0.5, h * 0.5, 0), "cardboard")
+	_add_box(Vector3(t, h, w), pos + Vector3(-w * 0.5 + t * 0.5, h * 0.5, 0), "cardboard")
+	var lid := _add_box(Vector3(w + 0.02, 0.05, w + 0.02), pos + Vector3(0, h + 0.025, 0), "cardboard_dark", 0.0, false)
+	_unpack_lids[box_id] = lid
+	# Dark interior bottom so the box reads as hollow, not solid.
+	var inside := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(w - 2.0 * t, w - 2.0 * t)
+	inside.mesh = qm
+	inside.material_override = _mat_by("dark")
+	inside.position = pos + Vector3(0, t + 0.002, 0)
+	inside.rotation.x = -PI * 0.5
+	add_child(inside)
+	if label != "":
+		var lbl := Label3D.new()
+		lbl.text = label
+		lbl.font_size = 64
+		lbl.pixel_size = 0.006
+		lbl.shaded = false
+		lbl.modulate = Color(0.16, 0.12, 0.09)
+		lbl.position = pos + Vector3(0, 0.24, w * 0.5 + 0.001)
+		add_child(lbl)
+	var prompt := "Open the unmarked box" if label == "" else "Unpack the %s box" % label
+	var inter := _add_interactable(box_id, prompt, pos + Vector3(0, 0.55, 0), Vector3(0.45, 0.45, 0.45))
+	inter.one_shot = false
+	inter.disable()
+
+
+## Unpacking prop API used by the UnpackManager.
+func open_unpack_box(box_id: String) -> void:
+	var lid: Node3D = _unpack_lids.get(box_id)
+	if lid != null:
+		lid.visible = false
+
+
+## Shows only the given placement-zone markers; hides the rest.
+func set_unpack_zones(zone_ids: Array) -> void:
+	for zid in _unpack_markers:
+		(_unpack_markers[zid] as MeshInstance3D).visible = bool(zone_ids.has(zid))
+
+
+func hide_unpack_zones() -> void:
+	set_unpack_zones([])
+
+
+## Builds a small item prop (origin at bottom-center, no collision).
+## Used for both the in-hand carried mesh and the placed prop.
+func make_unpack_item_mesh(kind: String) -> Node3D:
+	var root := Node3D.new()
+	match kind:
+		"books":
+			_uadd_prop_box(root, Vector3(0.28, 0.05, 0.2), Vector3(0, 0.025, 0), "fabric")
+			_uadd_prop_box(root, Vector3(0.26, 0.05, 0.19), Vector3(0, 0.075, 0), "fabric_dark")
+			_uadd_prop_box(root, Vector3(0.28, 0.05, 0.2), Vector3(0, 0.125, 0), "paper")
+		"frame":
+			_uadd_prop_box(root, Vector3(0.22, 0.28, 0.03), Vector3(0, 0.14, 0), "dark")
+			_uadd_prop_box(root, Vector3(0.16, 0.22, 0.012), Vector3(0, 0.14, 0.012), "paper")
+		"plant":
+			_uadd_prop_cyl(root, 0.07, 0.12, Vector3(0, 0.06, 0), "clay")
+			_uadd_prop_box(root, Vector3(0.16, 0.2, 0.16), Vector3(0, 0.2, 0), "leaf")
+		"mug":
+			_uadd_prop_cyl(root, 0.05, 0.1, Vector3(0, 0.05, 0), "appliance")
+		"bowl":
+			_uadd_prop_cyl(root, 0.09, 0.06, Vector3(0, 0.03, 0), "appliance")
+		"pot":
+			_uadd_prop_cyl(root, 0.11, 0.12, Vector3(0, 0.06, 0), "metal")
+		"lamp":
+			_uadd_prop_cyl(root, 0.06, 0.04, Vector3(0, 0.02, 0), "dark")
+			_uadd_prop_cyl(root, 0.015, 0.22, Vector3(0, 0.14, 0), "dark")
+			_uadd_prop_box(root, Vector3(0.16, 0.13, 0.16), Vector3(0, 0.28, 0), "lamp_glow")
+		"clock":
+			_uadd_prop_box(root, Vector3(0.14, 0.1, 0.06), Vector3(0, 0.05, 0), "dark")
+			_uadd_prop_box(root, Vector3(0.1, 0.07, 0.012), Vector3(0, 0.05, 0.028), "paper")
+		"clothes":
+			_uadd_prop_box(root, Vector3(0.3, 0.07, 0.24), Vector3(0, 0.035, 0), "fabric")
+			_uadd_prop_box(root, Vector3(0.28, 0.07, 0.22), Vector3(0, 0.105, 0), "fabric_dark")
+		"towel":
+			_uadd_prop_box(root, Vector3(0.32, 0.06, 0.24), Vector3(0, 0.03, 0), "bedding")
+		"soap":
+			_uadd_prop_box(root, Vector3(0.1, 0.05, 0.07), Vector3(0, 0.025, 0), "paper")
+		"tp":
+			_uadd_prop_cyl(root, 0.06, 0.12, Vector3(0, 0.06, 0), "paper")
+		"note":
+			_uadd_prop_box(root, Vector3(0.2, 0.012, 0.28), Vector3(0, 0.006, 0), "paper")
+		_:
+			_uadd_prop_box(root, Vector3(0.2, 0.2, 0.2), Vector3(0, 0.1, 0), "cardboard")
+	return root
+
+
+func _uadd_prop_box(parent: Node3D, size: Vector3, pos: Vector3, mat_name: String) -> void:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	mi.material_override = _mat_by(mat_name)
+	mi.position = pos
+	parent.add_child(mi)
+
+
+func _uadd_prop_cyl(parent: Node3D, radius: float, height: float, pos: Vector3, mat_name: String) -> void:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = radius
+	cm.bottom_radius = radius
+	cm.height = height
+	mi.mesh = cm
+	mi.material_override = _mat_by(mat_name)
+	mi.position = pos
+	parent.add_child(mi)
+
+
+## Spawns an unpacked item prop at its final slot; returns the node.
+func spawn_unpack_prop(kind: String, pos: Vector3) -> Node3D:
+	var n := make_unpack_item_mesh(kind)
+	n.position = pos
+	add_child(n)
+	return n
 
 
 func _build_lights() -> void:

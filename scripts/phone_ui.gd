@@ -12,7 +12,10 @@ extends CanvasLayer
 ## close / advance_clock); it never touches StoryData directly.
 ##
 ## Mara never types: her outgoing messages are scripted by story data
-## ("text" effects with "from": "mara"). The phone is display + reading only.
+## ("text" effects with "from": "mara"). The phone is display + reading only,
+## except for scripted quick-replies (see set_quick_reply).
+
+signal quick_reply_tapped(thread_id: String, text: String)
 
 const _PHONE_W := 360.0
 const _PHONE_H := 620.0
@@ -46,6 +49,18 @@ var _banner_title: Label
 var _banner_preview: Label
 var _banner_queue: Array = []
 var _banner_showing := false
+
+# Checklist tab: to-do list with done / current / locked states.
+var _checklist: Array = []
+var _checklist_view: VBoxContainer
+var _checklist_rows: VBoxContainer
+var _tab_messages: Button
+var _tab_checklist: Button
+# Scripted quick-reply inside a conversation (e.g. texting Mom).
+var _quick_reply_thread := ""
+var _quick_reply_text := ""
+var _quick_reply_btn: Button
+var _convo_hint: Label
 
 
 func _ready() -> void:
@@ -151,6 +166,9 @@ func _build_phone() -> void:
 	vbox.add_child(_list_view)
 	_convo_view = _build_convo_view()
 	vbox.add_child(_convo_view)
+	_checklist_view = _build_checklist_view()
+	vbox.add_child(_checklist_view)
+	vbox.add_child(_build_tab_bar())
 
 	_phone_body.visible = false
 
@@ -304,8 +322,24 @@ func _build_convo_view() -> VBoxContainer:
 	_convo_msgs.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_convo_scroll.add_child(_convo_msgs)
 
+	# Scripted quick-reply (hidden unless set_quick_reply was called for the
+	# open thread). Lets Mara send one canned text, e.g. to Mom.
+	_quick_reply_btn = Button.new()
+	_quick_reply_btn.focus_mode = Control.FOCUS_NONE
+	_quick_reply_btn.add_theme_font_size_override("font_size", 16)
+	_quick_reply_btn.add_theme_color_override("font_color", Color.WHITE)
+	_quick_reply_btn.add_theme_color_override("font_hover_color", Color.WHITE)
+	_quick_reply_btn.add_theme_stylebox_override("normal", _rounded(_ACCENT, 14))
+	_quick_reply_btn.add_theme_stylebox_override("hover", _rounded(Color(0.1, 0.6, 1.0), 14))
+	_quick_reply_btn.add_theme_stylebox_override("pressed", _rounded(Color(0.03, 0.42, 0.85), 14))
+	_quick_reply_btn.custom_minimum_size = Vector2(0, 44)
+	_quick_reply_btn.visible = false
+	_quick_reply_btn.pressed.connect(_on_quick_reply_pressed)
+	vbox.add_child(_quick_reply_btn)
+
 	var hint := _label("Mara doesn't reply — she just reads.", 12, _DIM_COLOR,
 		HORIZONTAL_ALIGNMENT_CENTER)
+	_convo_hint = hint
 	var hintpad := MarginContainer.new()
 	hintpad.add_theme_constant_override("margin_top", 6)
 	hintpad.add_theme_constant_override("margin_bottom", 8)
@@ -354,6 +388,123 @@ func _message_row(msg: Dictionary) -> VBoxContainer:
 
 
 # ------------------------------------------------------------------
+# Checklist tab
+# ------------------------------------------------------------------
+
+func _build_checklist_view() -> VBoxContainer:
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.visible = false
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var header := _label("Checklist", 30, _TEXT_COLOR)
+	var hpad := MarginContainer.new()
+	hpad.add_theme_constant_override("margin_left", 14)
+	hpad.add_theme_constant_override("margin_top", 6)
+	hpad.add_theme_constant_override("margin_bottom", 8)
+	hpad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hpad.add_child(header)
+	vbox.add_child(hpad)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vbox.add_child(scroll)
+	_checklist_rows = VBoxContainer.new()
+	_checklist_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_checklist_rows.add_theme_constant_override("separation", 16)
+	_checklist_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var rpad := MarginContainer.new()
+	rpad.add_theme_constant_override("margin_left", 14)
+	rpad.add_theme_constant_override("margin_right", 14)
+	rpad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rpad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rpad.add_child(_checklist_rows)
+	scroll.add_child(rpad)
+	return vbox
+
+
+## One checklist row: colored status dot + label. No emoji (font-safe).
+func _checklist_row(item: Dictionary) -> Control:
+	var state := String(item.get("state", "locked"))
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 12)
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var dot := PanelContainer.new()
+	dot.custom_minimum_size = Vector2(20, 20)
+	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var dot_color := Color(0.35, 0.35, 0.38)
+	if state == "done":
+		dot_color = Color(0.2, 0.78, 0.35)
+	elif state == "current":
+		dot_color = Color(0.25, 0.62, 1.0)
+	dot.add_theme_stylebox_override("panel", _rounded(dot_color, 10))
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(dot)
+	var label_color := _DIM_COLOR if state == "locked" else _TEXT_COLOR
+	var lab := _label(String(item.get("label", "")), 17, label_color)
+	lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hbox.add_child(lab)
+	var wrap := MarginContainer.new()
+	wrap.add_theme_constant_override("margin_top", 4)
+	wrap.add_theme_constant_override("margin_bottom", 4)
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.add_child(hbox)
+	return wrap
+
+
+func _render_checklist() -> void:
+	for child in _checklist_rows.get_children():
+		child.queue_free()
+	for item in _checklist:
+		_checklist_rows.add_child(_checklist_row(item as Dictionary))
+
+
+func _tab_button(text: String) -> Button:
+	var btn := Button.new()
+	btn.text = text
+	btn.flat = true
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(0, 38)
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.add_theme_font_size_override("font_size", 15)
+	return btn
+
+
+func _build_tab_bar() -> Control:
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_top", 6)
+	pad.add_theme_constant_override("margin_bottom", 2)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 4)
+	bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tab_messages = _tab_button("Messages")
+	_tab_messages.pressed.connect(_show_messages_tab)
+	bar.add_child(_tab_messages)
+	_tab_checklist = _tab_button("Checklist")
+	_tab_checklist.pressed.connect(_show_checklist)
+	bar.add_child(_tab_checklist)
+	pad.add_child(bar)
+	_set_active_tab("messages")
+	return pad
+
+
+func _set_active_tab(name: String) -> void:
+	_tab_messages.add_theme_color_override("font_color", _DIM_COLOR)
+	_tab_checklist.add_theme_color_override("font_color", _DIM_COLOR)
+	if name == "checklist":
+		_tab_checklist.add_theme_color_override("font_color", _ACCENT)
+	else:
+		_tab_messages.add_theme_color_override("font_color", _ACCENT)
+
+
+func _show_messages_tab() -> void:
+	_show_list()
+
+
+# ------------------------------------------------------------------
 # Rendering
 # ------------------------------------------------------------------
 
@@ -370,6 +521,14 @@ func _render_conversation(thread_id: String) -> void:
 	var t: Dictionary = _threads[thread_id]
 	for msg in t["messages"]:
 		_convo_msgs.add_child(_message_row(msg))
+	# Scripted quick-reply, if one is armed for this thread.
+	if _quick_reply_thread == thread_id and _quick_reply_text != "":
+		_quick_reply_btn.text = "Send: \"%s\"" % _quick_reply_text
+		_quick_reply_btn.visible = true
+		_convo_hint.visible = false
+	else:
+		_quick_reply_btn.visible = false
+		_convo_hint.visible = true
 	_scroll_to_bottom.call_deferred()
 
 
@@ -384,8 +543,10 @@ func _scroll_to_bottom() -> void:
 func _show_list() -> void:
 	_current_thread = ""
 	_convo_view.visible = false
+	_checklist_view.visible = false
 	_render_thread_list()
 	_list_view.visible = true
+	_set_active_tab("messages")
 
 
 func _show_thread(thread_id: String) -> void:
@@ -395,8 +556,19 @@ func _show_thread(thread_id: String) -> void:
 	(_threads[thread_id] as Dictionary)["unread"] = 0
 	_convo_name.text = String((_threads[thread_id] as Dictionary)["name"])
 	_list_view.visible = false
+	_checklist_view.visible = false
 	_convo_view.visible = true
+	_set_active_tab("messages")
 	_render_conversation(thread_id)
+
+
+func _show_checklist() -> void:
+	_current_thread = ""
+	_list_view.visible = false
+	_convo_view.visible = false
+	_render_checklist()
+	_checklist_view.visible = true
+	_set_active_tab("checklist")
 
 
 # ------------------------------------------------------------------
@@ -455,13 +627,15 @@ func is_open() -> bool:
 	return _open
 
 
-func open(thread_id: String = "") -> void:
+func open(view: String = "messages", thread_id: String = "") -> void:
 	_open = true
 	_phone_body.visible = true
 	# NOTE: animate offset_top, not position.y — with bottom anchors,
 	# position.y reports the absolute screen position, not the anchor offset.
 	_phone_body.offset_top = 220.0
-	if thread_id != "":
+	if view == "checklist":
+		_show_checklist()
+	elif thread_id != "":
 		_show_thread(thread_id)
 	else:
 		_show_list()
@@ -482,6 +656,41 @@ func unread_count(thread_id: String) -> int:
 	if not _threads.has(thread_id):
 		return 0
 	return int((_threads[thread_id] as Dictionary).get("unread", 0))
+
+
+## Checklist tab. Each item: {"id", "label", "state"} with state in
+## "done" / "current" / "locked". Driven by the GameManager.
+func set_checklist(items: Array) -> void:
+	_checklist = items
+	if _checklist_view != null and _checklist_view.visible:
+		_render_checklist()
+
+
+func is_on_checklist() -> bool:
+	return _checklist_view != null and _checklist_view.visible
+
+
+## Arms a one-tap canned reply inside a conversation (e.g. texting Mom).
+## The GameManager sends the actual text on quick_reply_tapped.
+func set_quick_reply(thread_id: String, text: String) -> void:
+	_quick_reply_thread = thread_id
+	_quick_reply_text = text
+	if _open and _current_thread == thread_id:
+		_render_conversation(thread_id)
+
+
+func clear_quick_reply() -> void:
+	_quick_reply_thread = ""
+	_quick_reply_text = ""
+	if _quick_reply_btn != null:
+		_quick_reply_btn.visible = false
+	if _convo_hint != null:
+		_convo_hint.visible = true
+
+
+func _on_quick_reply_pressed() -> void:
+	if _quick_reply_thread != "" and _quick_reply_text != "":
+		quick_reply_tapped.emit(_quick_reply_thread, _quick_reply_text)
 
 
 # ------------------------------------------------------------------

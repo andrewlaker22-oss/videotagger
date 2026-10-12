@@ -23,3 +23,7 @@ func get_prompt() -> String:
 
 func disable() -> void:
 	enabled = false
+
+
+func enable() -> void:
+	enabled = true

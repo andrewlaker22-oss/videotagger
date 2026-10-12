@@ -136,8 +136,10 @@ static func get_beats() -> Dictionary:
 			"next": "entry",
 		},
 		"entry": {
+			# NOTE: Mara texting Mom ("home safe! love you") is NOT auto-sent
+			# here anymore — it's a manual quick-reply tap in the Mom thread,
+			# gated by the phone checklist ("Text Mom you're home").
 			"effects": ["open_door",
-				{"effect": "text", "from": "mara", "to": "mom", "text": "home safe! love you"},
 				{"effect": "text", "from": "jess", "text": "how's the first night in the new place??"},
 			],
 			"objective": "Look around the living room.",
