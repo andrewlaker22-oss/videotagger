@@ -82,8 +82,9 @@ stairwell holes; guard walls (1 m) ring the holes on each floor.
   z in [-5, 1]).
 - **Stairs** (in the stair hall, z from 0.9 down to -4.0, ~29°):
   - Up-run x in [-0.7, 0.5] → upper hall. Down-run x in [0.9, 2.1] → basement.
-  - Visual steps are thin boxes with NO collision; each run has ONE sloped
-    ramp StaticBody3D the player walks on.
+  - Visual steps are solid boxes with closed risers, NO collision; each run
+    has ONE sloped ramp StaticBody3D the player walks on. Wood fascia trim
+    frames each slab hole; a dim light sits over the basement stair base.
   - Slab holes fit the runs snugly (0.05 m clearance/side); 1 m guard walls
     ring the holes on each floor (open only at stair entry/exit).
 - **Mechanical doors** (E toggles open/close, not story beats; work during

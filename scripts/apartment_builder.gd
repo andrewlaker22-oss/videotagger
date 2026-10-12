@@ -371,6 +371,23 @@ func _build_stairs() -> void:
 	_add_guard(Vector2(0.85, -4.0), Vector2(0.85, 0.9), GROUND_Y)
 	_add_guard(Vector2(2.15, -4.0), Vector2(2.15, 0.9), GROUND_Y)
 	_add_guard(Vector2(0.85, -4.0), Vector2(2.15, -4.0), GROUND_Y)
+	# Fascia trim around the stairwell holes so the slab cuts read as
+	# finished edges from below instead of raw black slots.
+	_add_fascia(0.85, 2.15, -4.0, 0.9, -0.075)  # basement ceiling
+	_add_fascia(-0.75, 0.55, -4.0, 0.9, 2.625)  # ground ceiling
+
+
+func _add_fascia(x0: float, x1: float, z0: float, z1: float, y: float) -> void:
+	# Wood trim frame around a stairwell slab hole. Slightly proud of the
+	# 0.15-thick slab; visual only, the hole stays passable.
+	var t := 0.2
+	var w := 0.12
+	var cx := (x0 + x1) * 0.5
+	var cz := (z0 + z1) * 0.5
+	_add_box(Vector3(w, t, (z1 - z0) + w), Vector3(x0 - w * 0.5, y, cz), "wood", 0.0, false)
+	_add_box(Vector3(w, t, (z1 - z0) + w), Vector3(x1 + w * 0.5, y, cz), "wood", 0.0, false)
+	_add_box(Vector3((x1 - x0) + w, t, w), Vector3(cx, y, z0 - w * 0.5), "wood", 0.0, false)
+	_add_box(Vector3((x1 - x0) + w, t, w), Vector3(cx, y, z1 + w * 0.5), "wood", 0.0, false)
 
 
 func _build_stair_run(x_center: float, up: bool) -> void:
@@ -378,12 +395,20 @@ func _build_stair_run(x_center: float, up: bool) -> void:
 	var run := 4.9
 	var rise := 2.7
 	var dir := 1.0 if up else -1.0
-	# Visual steps: thin boxes, NO collision.
+	var h := rise / steps
+	var floor_y := 0.0 if up else -2.7
+	# Visual steps: solid boxes with closed risers, NO collision. Each step
+	# spans from its tread top down past the next tread, so the staircase
+	# reads as a solid mass from every angle (no floating slats).
 	for i in range(steps):
-		var top_y := dir * (i + 1) * (rise / steps)
+		var top_y := dir * (i + 1) * h
 		var z := 0.9 - (i + 0.5) * (run / steps)
-		_add_box(Vector3(1.2, 0.19, run / steps + 0.02),
-			Vector3(x_center, top_y - 0.095, z), "wood", 0.0, false)
+		var bottom_y := maxf(top_y - h - 0.05, floor_y)
+		var height := top_y - bottom_y
+		if height < 0.03:
+			continue  # last down-run tread: the basement floor is the tread
+		_add_box(Vector3(1.2, height, run / steps + 0.02),
+			Vector3(x_center, top_y - height * 0.5, z), "wood", 0.0, false)
 	# ONE sloped ramp StaticBody3D for collision.
 	var angle := atan2(rise, run)
 	var length := sqrt(run * run + rise * rise) + 0.02
@@ -723,3 +748,4 @@ func _build_lights() -> void:
 	_add_light(Vector3(-5.5, 5.0, -3.0), Color(0.8, 1.0, 0.9), 1.4, 6.0, "buzz")     # bathroom
 	_add_light(Vector3(-4.0, 5.0, 3.0), Color(1.0, 0.85, 0.65), 1.0, 8.0, "steady")  # landing
 	_add_light(Vector3(0.0, -0.4, 0.5), Color(0.65, 0.75, 1.0), 0.9, 12.0, "buzz")   # basement
+	_add_light(Vector3(1.5, -1.2, -3.2), Color(1.0, 0.82, 0.6), 0.8, 6.0, "steady") # basement stair base
