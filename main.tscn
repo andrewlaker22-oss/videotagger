@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://scripts/audio_manager.gd" id="5"]
 [ext_resource type="Script" path="res://scripts/phone_ui.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/chore_manager.gd" id="7"]
+[ext_resource type="Script" path="res://scripts/unpack_manager.gd" id="8"]
 
 [sub_resource type="CapsuleShape3D" id="cap"]
 radius = 0.35
@@ -63,3 +64,6 @@ script = ExtResource("6")
 
 [node name="ChoreManager" type="Node" parent="."]
 script = ExtResource("7")
+
+[node name="UnpackManager" type="Node" parent="."]
+script = ExtResource("8")

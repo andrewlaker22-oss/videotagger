@@ -29,8 +29,9 @@ Main (Node3D) — game_manager.gd
 | `dialogue_ui.gd` | Objective, prompt, dialogue box, timed choices + countdown, toasts, letterbox, ending screen, fade-in | Story data, state |
 | `interactable.gd` | Hotspot node: `interact_id`, `prompt`, `enabled` | Its story meaning (that's in `story_data`) |
 | `apartment_builder.gd` | Level geometry from `WALLS` data table, stairs (visual steps + collision ramps), props, lights + flicker, door tween, blackout, power stutter | Story |
-| `phone_ui.gd` | iPhone UI: thread list / conversation views, unread badges, notification banner queue, status-bar clock; renders only, driven by the GameManager | Story data, input routing, game state |
+| `phone_ui.gd` | iPhone UI: thread list / conversation views, unread badges, notification banner queue, status-bar clock, Checklist tab (done/current/locked), scripted quick-reply button; renders only, driven by the GameManager | Story data, input routing, game state |
 | `chore_manager.gd` | Optional chore minigames (trash fetch-and-carry, dish wash mode): chore state, carried-bag visual, wash UI + scrub input, horror hooks (stalker texts, light flicker); emits `changed` | Story beats, input routing (GameManager forwards), level geometry |
+| `unpack_manager.gd` | Core opening gameplay: unpacking 12 items from 4 labeled boxes into glowing placement zones (+ unmarked box with the stalker note); carried-item visual, gating, horror payoff; emits `changed` / `completed` | Story beats, input routing (GameManager forwards), level geometry |
 | `audio_manager.gd` | `play_sfx` / `play_music` / `stop_music` hooks (currently print) | Anything else |
 
 ## The story state machine
@@ -94,11 +95,21 @@ designers place hotspots and writers name beats without touching each other's fi
   `"effects"` array: `{"effect": "text", "from": <thread_id>, "text": ...}`
   for incoming, `{"effect": "text", "from": "mara", "to": <thread_id>, ...}`
   for Mara's scripted outgoing messages.
+- **Checklist tab**: bottom tab bar switches between Messages and Checklist.
+  `GameManager._refresh_checklist()` pushes items (`set_checklist()`) with
+  states done (green dot) / current (blue dot) / locked (gray). The checklist
+  drives the opening sequence: lock the front door → text Mom → unpack.
+- **Quick-reply**: `set_quick_reply(thread_id, text)` arms a one-tap canned
+  reply button inside that thread's conversation view; tapping emits
+  `quick_reply_tapped(thread_id, text)` and the GameManager sends the text
+  (`send_text`) and advances the checklist. Used for "Text Mom you're home"
+  (`"home safe! love you"`); the old auto-sent entry-beat text was removed
+  in favor of this manual tap.
 
 ## Chore minigames (`chore_manager.gd`)
 
-Optional filler, offered once after the intro (toast + checklist UI under the
-objective). Never blocks story beats; persists across dialogue; blackout
+Optional filler, offered once after unpacking completes (toast + checklist UI
+under the objective). Never blocks story beats; persists across dialogue; blackout
 doesn't disable chore hotspots (`disable_all_interactables()` skips
 `trash_*` / `sink`).
 
@@ -121,6 +132,53 @@ doesn't disable chore hotspots (`disable_all_interactables()` skips
   the manager guards `primary_action` and `Tab` while washing.
 - **Checklist UI**: `DialogueUI.set_chores()` — small line under the objective
   ("Trash 1/3 · Dishes 2/4"), shown once chores are offered.
+
+## Unpacking — core opening gameplay (`unpack_manager.gd`)
+
+The first thing the player does (3–5 min), gated by the phone checklist:
+**lock the front door → text Mom → unpack the boxes**. Each checklist item
+unlocks the next; the HUD objective tracks the current item.
+
+- **Checklist items** (`GameManager.CHECKLIST_ORDER`, flags `door_locked` /
+  `texted_mom` / `unpacking_done`): `GameManager._refresh_checklist()` rebuilds
+  the phone UI, arms the Mom quick-reply while it's current, and starts the
+  UnpackManager once (a) and (b) are done. After the intro the phone
+  auto-opens on the Checklist tab (onboarding) with toast
+  "Check your list — press Tab".
+- **(a) Lock the front door**: `front_door_lock` hotspot by the front door
+  (one-shot). E swings the door shut (`ApartmentBuilder.close_front_door()`)
+  and locks it — refused with "Step away from the door first." if the player
+  is within 1.6 m of the doorway. Toast "Front door locked." + `ding`.
+- **(b) Text Mom you're home**: quick-reply button `Send: "home safe! love you"`
+  inside the Mom thread (only while current). Tap → `send_text`, toast "Sent.",
+  + `ding`. (Replaces the old auto-sent entry-beat text.)
+- **(c) Unpack the boxes**: 5 cardboard boxes in the foyer/living room —
+  4 labeled (KITCHEN, BOOKS, BEDROOM, BATH) with 3 items each, 1 unmarked,
+  slightly apart. E takes the next item (box lid opens; item rides the camera
+  bottom-right with a walk bob). While carrying, only that item's placement
+  zone is enabled and its marker glows (pulsing emissive disc); E at the zone
+  snaps the item in with a scale-pop + `ding`. 12 items across 10 zones
+  (kitchen sill/stove, living-room shelf + 2 windowsills, bedroom
+  nightstand/bed, bathroom tub/sink/toilet) — walking the whole house teaches
+  the layout. Objective "Unpack the boxes (n/12)". No timers, no fail states;
+  wrong zones simply aren't enabled while carrying.
+- **The unmarked box** (`unpack_box_plain`) stays disabled until the other 4
+  are empty, then enables with toast "One box left. That one wasn't on the
+  truck." Inside: a note reading "welcome home, mara". Taking it fires the
+  stalker text "i know you're home" + buzz, emits `completed`, and the
+  GameManager clears the objective, marks the checklist done, and offers the
+  optional chores (the pre-existing post-intro flow).
+- **Routing**: `GameManager._try_interact()` sends `unpack_*` / `uzone_*` ids
+  to `UnpackManager.interact()`; `front_door_lock` is handled by the manager
+  directly. Box/zone hotspots start disabled; `disable_all_interactables()`
+  skips `unpack_*` / `uzone_*` / `front_door_lock` so the opening survives
+  the blackout like the chores do.
+- **Props**: `ApartmentBuilder._build_unpack()` — open-top cardboard boxes
+  (floor + 4 walls + dark interior + removable lid + Label3D tag), 10 zone
+  markers, zone/box hotspots, a low living-room bookcase, and
+  `make_unpack_item_mesh(kind)` which builds the 12 small item props
+  (books, frame, plant, mug, bowl, pot, lamp, clock, clothes, towel, soap,
+  toilet paper, note) for both the in-hand mesh and the placed prop.
 
 ## Floor plan (all dimensions in meters)
 
