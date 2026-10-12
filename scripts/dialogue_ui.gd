@@ -288,6 +288,11 @@ func set_objective(text: String) -> void:
 	_objective.visible = text != ""
 
 
+## Current objective text (used for save-slot labels).
+func get_objective() -> String:
+	return _objective.text
+
+
 func set_chores(text: String) -> void:
 	_chores.text = text
 	_chores.visible = text != ""

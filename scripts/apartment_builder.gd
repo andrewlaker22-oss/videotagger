@@ -264,6 +264,39 @@ func toggle_door(door_id: String) -> void:
 	inter.prompt = "Close the door" if not is_open else "Open the door"
 
 
+## Snaps a mechanical door to a saved open/closed state (save/load restore).
+func _set_door_instant(door_id: String, is_open: bool) -> void:
+	if not _doors.has(door_id):
+		return
+	var dd: Dictionary = _doors[door_id]
+	dd["open"] = is_open
+	(dd["pivot"] as Node3D).rotation.y = float(dd["open_angle"]) if is_open else 0.0
+	(dd["interactable"] as Interactable).prompt = "Close the door" if is_open else "Open the door"
+
+
+# ------------------------------------------------------------------
+# Save/load support: blackout + door states. Hide-closet doors always
+# reset to closed — the player never loads hidden.
+# ------------------------------------------------------------------
+
+func serialize_world() -> Dictionary:
+	var doors := {}
+	for door_id in _doors.keys():
+		doors[door_id] = bool((_doors[door_id] as Dictionary)["open"])
+	return {"blackout": _blackout, "doors": doors, "front_open": _door_open}
+
+
+func deserialize_world(d: Dictionary) -> void:
+	var doors: Dictionary = d.get("doors", {})
+	for door_id in doors.keys():
+		_set_door_instant(String(door_id), bool(doors[door_id]))
+	if d.has("front_open"):
+		_door_open = bool(d["front_open"])
+		if _door_pivot != null:
+			_door_pivot.rotation.y = 1.85 if _door_open else 0.15
+	_blackout = bool(d.get("blackout", false))
+
+
 # ------------------------------------------------------------------
 # Materials
 # ------------------------------------------------------------------
@@ -998,10 +1031,15 @@ func get_dish_plate(i: int) -> Node3D:
 	return _dish_plates[i]
 
 
-func dish_to_rack(i: int) -> void:
+func dish_to_rack(i: int, instant: bool = false) -> void:
 	if i < 0 or i >= _dish_plates.size() or i >= _rack_slots.size():
 		return
 	var plate: Node3D = _dish_plates[i]
+	if instant:
+		# Save/load restore: snap straight to the rack, no tween.
+		plate.position = _rack_slots[i]
+		plate.rotation.x = 1.35
+		return
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(plate, "position", _rack_slots[i], 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)

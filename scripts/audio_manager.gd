@@ -19,6 +19,10 @@ extends Node
 
 var _cache: Dictionary = {}  # sfx_name -> AudioStream. TODO(audio): fill me.
 
+## Master volume 0..1, driven by the SettingsManager (user://settings.cfg).
+## TODO(audio): apply this to the player pool / music player volume_db.
+var volume: float = 0.8
+
 
 func play_sfx(sfx_name: String) -> void:
 	# TODO(audio): replace with pooled AudioStreamPlayer playback.

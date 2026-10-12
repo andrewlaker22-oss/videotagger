@@ -20,6 +20,7 @@ var control_locked: bool = true   # Blocks movement + look (dialogue, choices).
 var allow_capture: bool = true    # May a click re-capture the mouse? Off during choices.
 var speed_factor: float = 1.0     # Movement multiplier (e.g. slower while carrying trash).
 var movement_locked: bool = false  # Blocks WASD only; look stays on (hiding).
+var invert_y: bool = false  # Flips vertical look; driven by the SettingsManager.
 var yaw_limit: float = -1.0       # <0 = free look; else max yaw deviation (hiding).
 var yaw_base: float = 0.0         # Yaw the limit is measured from.
 var current: Interactable = null  # Interactable currently under the crosshair.
@@ -44,7 +45,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if yaw_limit >= 0.0:
 				# Peeking from a hiding spot: clamp yaw around the hide facing.
 				rotation.y = clampf(rotation.y, yaw_base - yaw_limit, yaw_base + yaw_limit)
-			head.rotate_x(-mm.relative.y * mouse_sensitivity)
+			head.rotate_x(-mm.relative.y * mouse_sensitivity * (-1.0 if invert_y else 1.0))
 			head.rotation.x = clampf(head.rotation.x, look_min, look_max)
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
