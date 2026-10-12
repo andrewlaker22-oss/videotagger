@@ -25,6 +25,7 @@ var _line_index: int = 0
 @onready var apartment: ApartmentBuilder = $Apartment
 @onready var audio: AudioManager = $AudioManager
 @onready var phone_ui: PhoneUI = $PhoneUI
+@onready var chores: ChoreManager = $ChoreManager
 @onready var world_env: WorldEnvironment = $WorldEnvironment
 
 
@@ -33,6 +34,8 @@ func _ready() -> void:
 	player.choice_hotkey.connect(_on_choice_hotkey)
 	player.focus_changed.connect(_on_focus_changed)
 	ui.choice_selected.connect(_on_choice_selected)
+	chores.setup(player, ui, apartment, phone_ui, audio)
+	chores.changed.connect(_on_chores_changed)
 	phone_ui.load_threads(StoryData.get_phone_threads())
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	ui.fade_from_black()
@@ -50,11 +53,17 @@ func _unhandled_input(event: InputEvent) -> void:
 						get_tree().reload_current_scene()
 				KEY_TAB:
 					if state == State.EXPLORE:
-						_toggle_phone()
+						if chores.in_wash_mode:
+							chores.exit_wash_mode()
+						else:
+							_toggle_phone()
 						get_viewport().set_input_as_handled()
 				KEY_ESCAPE:
 					if phone_ui.is_open():
 						_close_phone()
+						get_viewport().set_input_as_handled()
+					elif chores.in_wash_mode:
+						chores.exit_wash_mode()
 						get_viewport().set_input_as_handled()
 
 
@@ -168,6 +177,15 @@ func _resume_explore() -> void:
 	ui.hide_dialogue()
 	ui.set_letterbox(false)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	# Offer the optional chores exactly once, after the intro sequence.
+	if not bool(flags.get("chores_offered", false)):
+		flags["chores_offered"] = true
+		ui.show_toast("The place is a mess. Tidy up? (Optional)")
+		ui.set_chores(chores.get_checklist())
+
+
+func _on_chores_changed() -> void:
+	ui.set_chores(chores.get_checklist())
 
 
 # ------------------------------------------------------------------
@@ -205,7 +223,7 @@ func _close_phone() -> void:
 func _on_primary_action() -> void:
 	match state:
 		State.EXPLORE:
-			if not phone_ui.is_open():
+			if not phone_ui.is_open() and not chores.in_wash_mode:
 				_try_interact()
 		State.DIALOGUE:
 			_advance_line()
@@ -225,6 +243,12 @@ func _try_interact() -> void:
 	# Mechanical doors toggle instead of starting a story beat.
 	if String(inter.interact_id).begins_with("door_"):
 		apartment.toggle_door(inter.interact_id)
+		audio.play_sfx("interact")
+		return
+	# Chore hotspots go to the ChoreManager (optional minigames).
+	var cid := String(inter.interact_id)
+	if cid.begins_with("trash_") or cid == "sink":
+		chores.interact(cid)
 		audio.play_sfx("interact")
 		return
 	var beat_id := String(StoryData.get_trigger_beats().get(inter.interact_id, ""))

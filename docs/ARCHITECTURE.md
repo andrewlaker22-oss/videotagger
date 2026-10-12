@@ -30,6 +30,7 @@ Main (Node3D) — game_manager.gd
 | `interactable.gd` | Hotspot node: `interact_id`, `prompt`, `enabled` | Its story meaning (that's in `story_data`) |
 | `apartment_builder.gd` | Level geometry from `WALLS` data table, stairs (visual steps + collision ramps), props, lights + flicker, door tween, blackout, power stutter | Story |
 | `phone_ui.gd` | iPhone UI: thread list / conversation views, unread badges, notification banner queue, status-bar clock; renders only, driven by the GameManager | Story data, input routing, game state |
+| `chore_manager.gd` | Optional chore minigames (trash fetch-and-carry, dish wash mode): chore state, carried-bag visual, wash UI + scrub input, horror hooks (stalker texts, light flicker); emits `changed` | Story beats, input routing (GameManager forwards), level geometry |
 | `audio_manager.gd` | `play_sfx` / `play_music` / `stop_music` hooks (currently print) | Anything else |
 
 ## The story state machine
@@ -93,6 +94,33 @@ designers place hotspots and writers name beats without touching each other's fi
   `"effects"` array: `{"effect": "text", "from": <thread_id>, "text": ...}`
   for incoming, `{"effect": "text", "from": "mara", "to": <thread_id>, ...}`
   for Mara's scripted outgoing messages.
+
+## Chore minigames (`chore_manager.gd`)
+
+Optional filler, offered once after the intro (toast + checklist UI under the
+objective). Never blocks story beats; persists across dialogue; blackout
+doesn't disable chore hotspots (`disable_all_interactables()` skips
+`trash_*` / `sink`).
+
+- **Trash (fetch-and-carry)**: 3 bags (`trash_bag_kitchen/living/bedroom`) +
+  porch bin (`trash_bin`). E picks up ONE bag at a time (bag prop hides, a
+  small bag mesh rides the camera, `player.speed_factor` 0.85 while carrying);
+  E at the bin tosses it in. Checklist "Trash n/3". First deposit (outside at
+  night) triggers stalker text "i can see you". Completion toast:
+  "All clean. For nothing." + `ding` hook.
+- **Dishes (hold-to-scrub)**: `sink` hotspot at the kitchen sink enters wash
+  mode (movement locked, mouse released, camera leans in; `Esc`/`Tab` exits).
+  Hold LMB or E to scrub the active dish: per-dish progress ring, ~3 s each,
+  plate wiggles while scrubbing, `ding` per dish, then it tweens upright into
+  the drying rack. Completing dish 2 flickers the kitchen lights
+  (`ApartmentBuilder.flicker_near()`) and texts "turn around". All 4 done:
+  toast "Dishes done.", sink hotspot disables itself.
+- **Routing**: `GameManager._try_interact()` sends `trash_*` / `sink` ids to
+  `ChoreManager.interact()` (not story beats, not in `get_trigger_beats()`).
+  Wash-mode input (LMB/E hold, Esc exit) is handled by the ChoreManager;
+  the manager guards `primary_action` and `Tab` while washing.
+- **Checklist UI**: `DialogueUI.set_chores()` — small line under the objective
+  ("Trash 1/3 · Dishes 2/4"), shown once chores are offered.
 
 ## Floor plan (all dimensions in meters)
 

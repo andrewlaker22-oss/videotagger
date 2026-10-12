@@ -16,6 +16,7 @@ const _OTHER_COLOR := Color(0.62, 0.74, 0.9)
 const _TOAST_COLOR := Color(0.98, 0.9, 0.62)
 
 var _objective: Label
+var _chores: Label
 var _prompt: Label
 var _toast: Label
 var _dialogue_panel: PanelContainer
@@ -41,6 +42,7 @@ var _toast_tween: Tween = null
 func _ready() -> void:
 	layer = 10
 	_build_objective()
+	_build_chores()
 	_build_prompt()
 	_build_toast()
 	_build_dialogue_panel()
@@ -84,6 +86,21 @@ func _build_objective() -> void:
 	_objective.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9))
 	_shadowed(_objective)
 	add_child(_objective)
+
+
+func _build_chores() -> void:
+	# Optional chore checklist, under the story objective. Driven by the
+	# GameManager via set_chores(); hidden when empty.
+	_chores = Label.new()
+	_chores.offset_left = 18.0
+	_chores.offset_top = 42.0
+	_chores.offset_right = 700.0
+	_chores.offset_bottom = 68.0
+	_chores.add_theme_font_size_override("font_size", 15)
+	_chores.add_theme_color_override("font_color", Color(0.6, 0.68, 0.6))
+	_shadowed(_chores)
+	_chores.visible = false
+	add_child(_chores)
 
 
 func _build_prompt() -> void:
@@ -269,6 +286,11 @@ func fade_from_black(duration: float = 1.6) -> void:
 func set_objective(text: String) -> void:
 	_objective.text = text
 	_objective.visible = text != ""
+
+
+func set_chores(text: String) -> void:
+	_chores.text = text
+	_chores.visible = text != ""
 
 
 func show_prompt(text: String) -> void:

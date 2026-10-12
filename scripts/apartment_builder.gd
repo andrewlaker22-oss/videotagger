@@ -95,6 +95,10 @@ var _stutter_until: float = 0.0
 var _door_pivot: Node3D = null
 var _door_open: bool = false
 var _doors: Dictionary = {}  # door_id -> {pivot, open, open_angle, interactable}.
+var _trash_bag_nodes: Dictionary = {}  # bag_id -> Array of prop nodes.
+var _dish_plates: Array = []  # dirty dish bodies, in wash order.
+var _rack_slots: Array = []  # Vector3 slots in the drying rack.
+var _flicker: Dictionary = {}  # light index -> {"until": float} (horror flicker).
 
 
 func _ready() -> void:
@@ -114,6 +118,7 @@ func _ready() -> void:
 	_build_windows()
 	_build_backyard()
 	_build_interactables()
+	_build_chores()
 	_build_lights()
 
 
@@ -123,7 +128,8 @@ func _process(delta: float) -> void:
 		_stutter_until = 0.0
 		_blackout = true
 	var stuttering := _stutter_until > 0.0
-	for entry in _lights:
+	for i in _lights.size():
+		var entry: Dictionary = _lights[i]
 		var l: OmniLight3D = entry["node"]
 		if _blackout:
 			l.light_energy = maxf(0.0, l.light_energy - delta * 6.0)
@@ -131,13 +137,20 @@ func _process(delta: float) -> void:
 		var base: float = entry["base"]
 		var phase: float = entry["phase"]
 		var e := base
+		# Temporary horror flicker (see flicker_near): force "dying" mode.
+		var mode := String(entry["mode"])
+		if _flicker.has(i):
+			if t < float((_flicker[i] as Dictionary)["until"]):
+				mode = "dying"
+			else:
+				_flicker.erase(i)
 		if stuttering:
 			# Power gasps back for a heartbeat: violent flicker, then it dies.
 			e = base * (0.15 + 0.85 * absf(sin(t * 27.0 + phase * 3.1)))
 			if fmod(t * 7.0 + phase, 1.0) < 0.12:
 				e *= 0.1
 		else:
-			match String(entry["mode"]):
+			match mode:
 				"steady":
 					e = base * (0.95 + 0.05 * sin(t * 11.0 + phase))
 				"buzz":
@@ -174,16 +187,32 @@ func stutter_power(duration: float = 1.6) -> void:
 	_stutter_until = Time.get_ticks_msec() / 1000.0 + duration
 
 
+## Makes lights near `pos` flicker hard for `duration` seconds, then restores
+## their normal mode. Used for the dish-washing horror beat.
+func flicker_near(pos: Vector3, radius: float, duration: float = 1.5) -> void:
+	var until: float = Time.get_ticks_msec() / 1000.0 + duration
+	for i in _lights.size():
+		var entry: Dictionary = _lights[i]
+		var l: OmniLight3D = entry["node"]
+		if l.position.distance_to(pos) <= radius and not _flicker.has(i):
+			_flicker[i] = {"until": until}
+
+
 func disable_all_interactables() -> void:
 	for child in get_children():
 		if child is Interactable:
 			var inter := child as Interactable
 			# The breaker box must stay usable: the breaker beat needs it
 			# AFTER the blackout disables everything else. Mechanical doors
-			# also stay usable (they are not story beats).
+			# also stay usable (they are not story beats). Chore hotspots
+			# (trash_*, sink) persist too — chores never block the story.
 			if inter.interact_id == "breaker_box":
 				continue
 			if String(inter.interact_id).begins_with("door_"):
+				continue
+			if String(inter.interact_id).begins_with("trash_"):
+				continue
+			if inter.interact_id == "sink":
 				continue
 			inter.disable()
 
@@ -733,6 +762,71 @@ func _build_interactables() -> void:
 	_add_interactable("bathroom_mirror", "Look in the mirror", Vector3(-6.3, UPPER_Y + 1.6, -4.1), Vector3(0.45, 0.55, 0.35))
 	_add_interactable("kitchen_knife", "Look at the knife", Vector3(3.2, 1.1, -4.25), Vector3(0.5, 0.4, 0.4))
 	_add_interactable("breaker_box", "Flip the breaker", Vector3(6.4, BASE_Y + 1.35, -1.0), Vector3(0.35, 0.45, 0.35))
+
+
+# ------------------------------------------------------------------
+# Chores (optional minigames). Props + hotspots; ChoreManager owns state.
+# ------------------------------------------------------------------
+
+func _build_chores() -> void:
+	# --- Trash: 3 bags around the house, bin on the porch. ---
+	_add_trash_bag("trash_bag_kitchen", Vector3(2.2, 0.0, -4.0))
+	_add_trash_bag("trash_bag_living", Vector3(-2.4, 0.0, -3.1))
+	_add_trash_bag("trash_bag_bedroom", Vector3(3.8, UPPER_Y, -2.5))
+	# Curbside bin on the porch, east side inside the railing.
+	_add_box(Vector3(0.55, 0.85, 0.55), Vector3(1.55, 0.425, 6.05), "dark")
+	_add_box(Vector3(0.62, 0.08, 0.62), Vector3(1.55, 0.89, 6.05), "dark", 0.0, false)
+	# --- Dishes: sink + dirty stack on the counter, rack on an extension. ---
+	# Counter extension east (clear of the back-door swing, which goes north).
+	_add_box(Vector3(0.4, 0.9, 0.65), Vector3(4.1, 0.45, -4.62), "wood")
+	# Sink basin + faucet on the counter, east of the knife.
+	_add_box(Vector3(0.42, 0.14, 0.4), Vector3(3.62, 0.94, -4.62), "metal", 0.0, false)
+	_add_box(Vector3(0.05, 0.32, 0.05), Vector3(3.62, 1.1, -4.83), "metal", 0.0, false)
+	_add_box(Vector3(0.05, 0.05, 0.22), Vector3(3.62, 1.24, -4.73), "metal", 0.0, false)
+	# 4 dirty plates stacked west of the sink.
+	for i in range(4):
+		var plate := _add_box(Vector3(0.3, 0.035, 0.3), Vector3(2.72, 0.92 + i * 0.04, -4.62), "appliance", 0.0, false)
+		_dish_plates.append(plate)
+	# Drying rack on the extension; slots for the 4 plates, standing upright.
+	_add_box(Vector3(0.36, 0.05, 0.4), Vector3(4.1, 0.925, -4.62), "dark", 0.0, false)
+	for i in range(4):
+		_rack_slots.append(Vector3(4.1 + (i - 1.5) * 0.085, 1.12, -4.62))
+	# --- Chore hotspots (routed to ChoreManager, not story beats). ---
+	var b1 := _add_interactable("trash_bag_kitchen", "Grab the trash bag", Vector3(2.2, 0.6, -4.0), Vector3(0.45, 0.45, 0.45))
+	var b2 := _add_interactable("trash_bag_living", "Grab the trash bag", Vector3(-2.4, 0.6, -3.1), Vector3(0.45, 0.45, 0.45))
+	var b3 := _add_interactable("trash_bag_bedroom", "Grab the trash bag", Vector3(3.8, UPPER_Y + 0.6, -2.5), Vector3(0.45, 0.45, 0.45))
+	var b4 := _add_interactable("trash_bin", "Toss the bag in", Vector3(1.55, 1.0, 6.05), Vector3(0.5, 0.5, 0.5))
+	var s1 := _add_interactable("sink", "Wash the dishes", Vector3(3.85, 1.15, -4.35), Vector3(0.3, 0.35, 0.3))
+	for inter in [b1, b2, b3, b4, s1]:
+		(inter as Interactable).one_shot = false
+
+
+func _add_trash_bag(bag_id: String, pos: Vector3) -> void:
+	var n1 := _add_box(Vector3(0.45, 0.5, 0.45), pos + Vector3(0, 0.25, 0), "fabric_dark", 0.0, false)
+	var n2 := _add_box(Vector3(0.18, 0.14, 0.18), pos + Vector3(0, 0.56, 0), "fabric_dark", 0.4, false)
+	_trash_bag_nodes[bag_id] = [n1, n2]
+
+
+## Chore prop API used by the ChoreManager.
+func hide_trash_bag(bag_id: String) -> void:
+	for n in _trash_bag_nodes.get(bag_id, []):
+		(n as Node3D).visible = false
+
+
+func get_dish_plate(i: int) -> Node3D:
+	if i < 0 or i >= _dish_plates.size():
+		return null
+	return _dish_plates[i]
+
+
+func dish_to_rack(i: int) -> void:
+	if i < 0 or i >= _dish_plates.size() or i >= _rack_slots.size():
+		return
+	var plate: Node3D = _dish_plates[i]
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(plate, "position", _rack_slots[i], 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(plate, "rotation:x", 1.35, 0.6)
 
 
 func _build_lights() -> void:

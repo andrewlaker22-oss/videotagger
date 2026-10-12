@@ -18,6 +18,7 @@ signal focus_changed(interactable)  # Interactable under the crosshair, or null.
 
 var control_locked: bool = true   # Blocks movement + look (dialogue, choices).
 var allow_capture: bool = true    # May a click re-capture the mouse? Off during choices.
+var speed_factor: float = 1.0     # Movement multiplier (e.g. slower while carrying trash).
 var current: Interactable = null  # Interactable currently under the crosshair.
 
 var _shake: float = 0.0
@@ -83,8 +84,8 @@ func _physics_process(delta: float) -> void:
 		dir.y = 0.0
 		if dir.length() > 0.01:
 			dir = dir.normalized()
-	velocity.x = dir.x * move_speed
-	velocity.z = dir.z * move_speed
+	velocity.x = dir.x * move_speed * speed_factor
+	velocity.z = dir.z * move_speed * speed_factor
 	move_and_slide()
 
 	_update_focus()
