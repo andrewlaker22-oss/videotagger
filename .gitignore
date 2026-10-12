@@ -1,0 +1,21 @@
+# Godot 4 generated files — never commit these.
+.godot/
+
+# Export artifacts (Windows builds, packages).
+build/
+*.exe
+*.pck
+*.zip
+
+# Godot editor / import leftovers.
+*.import.bak
+
+# OS noise.
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor backups.
+*~
+*.bak
+*.orig
