@@ -52,6 +52,8 @@ var _done := 0
 var _carrying := ""  # item id currently in hand, "" = empty-handed
 var _remaining: Dictionary = {}  # box_id -> Array of item ids, in take order
 var _items_by_id: Dictionary = {}  # item_id -> item Dictionary
+var _placed: Array = []  # item ids already put away, in place order
+var _opened: Array = []  # box ids whose lids have been opened
 var _carry_bob := 0.0
 var _carry_base_y := -0.3
 
@@ -137,6 +139,8 @@ func _take_from_box(box_id: String) -> void:
 	if remaining.is_empty():
 		return
 	_apt.open_unpack_box(box_id)
+	if not _opened.has(box_id):
+		_opened.append(box_id)
 	var item_id := String(remaining.pop_front())
 	var item: Dictionary = _items_by_id[item_id]
 	_carrying = item_id
@@ -160,6 +164,7 @@ func _place_at_zone(zone_id: String) -> void:
 	if String(item["zone"]) != zone_id:
 		return
 	_done += 1
+	_placed.append(_carrying)
 	_free_carry_mesh()
 	var slot: Vector3 = item["slot"]
 	var node := _apt.spawn_unpack_prop(String(item["kind"]), slot)
@@ -185,6 +190,8 @@ func _take_note() -> void:
 		return
 	_finished = true
 	_apt.open_unpack_box(PLAIN_BOX)
+	if not _opened.has(PLAIN_BOX):
+		_opened.append(PLAIN_BOX)
 	_audio.play_sfx("paper")
 	# The note, held up to read.
 	_carry_mesh = _apt.make_unpack_item_mesh("note")
@@ -221,6 +228,72 @@ func _process(delta: float) -> void:
 	if _carry_mesh != null and is_instance_valid(_carry_mesh):
 		_carry_bob += delta
 		_carry_mesh.position.y = _carry_base_y + sin(_carry_bob * 7.0) * 0.012
+
+
+# ------------------------------------------------------------------
+# Save/load support. A carried item is put back into its box (never
+# restored in-hand).
+# ------------------------------------------------------------------
+
+func serialize() -> Dictionary:
+	var rem := {}
+	for box_id in _remaining.keys():
+		rem[box_id] = (_remaining[box_id] as Array).duplicate()
+	return {
+		"started": _started,
+		"finished": _finished,
+		"done": _done,
+		"carrying": _carrying,
+		"remaining": rem,
+		"placed": _placed.duplicate(),
+		"opened": _opened.duplicate(),
+	}
+
+
+func deserialize(d: Dictionary) -> void:
+	_free_carry_mesh()
+	_carrying = ""
+	_started = bool(d.get("started", false))
+	_finished = bool(d.get("finished", false))
+	_done = int(d.get("done", 0))
+	_remaining.clear()
+	var rem: Dictionary = d.get("remaining", {})
+	for box_id in rem.keys():
+		var arr: Array = []
+		for iid in rem[box_id]:
+			arr.append(str(iid))
+		_remaining[String(box_id)] = arr
+	# A carried item goes back into its box.
+	var carry_id := String(d.get("carrying", ""))
+	if carry_id != "" and _items_by_id.has(carry_id):
+		var box := String((_items_by_id[carry_id] as Dictionary)["box"])
+		if _remaining.has(box):
+			(_remaining[box] as Array).push_front(carry_id)
+	# Rebuild placed props and opened lids.
+	_placed.clear()
+	for iid in d.get("placed", []):
+		var sid := str(iid)
+		if _items_by_id.has(sid):
+			var item: Dictionary = _items_by_id[sid]
+			_apt.spawn_unpack_prop(String(item["kind"]), item["slot"])
+			_placed.append(sid)
+	_opened.clear()
+	for box_id in d.get("opened", []):
+		var bid := String(box_id)
+		_apt.open_unpack_box(bid)
+		_opened.append(bid)
+	# Restore hotspot states.
+	_apt.hide_unpack_zones()
+	if _finished:
+		_set_boxes_enabled(false)
+		_set_interactable(PLAIN_BOX, false)
+	elif _started:
+		_set_boxes_enabled(true)
+		_set_interactable(PLAIN_BOX, _done >= TOTAL)
+	else:
+		_set_boxes_enabled(false)
+		_set_interactable(PLAIN_BOX, false)
+	changed.emit()
 
 
 # ------------------------------------------------------------------

@@ -623,6 +623,42 @@ func advance_clock() -> void:
 	_clock_label.text = _clock_string()
 
 
+## Save/load support. Threads are rebuilt from the story data at boot
+## (load_threads); this overwrites messages, unread counts, and the clock.
+func serialize() -> Dictionary:
+	var threads := {}
+	for thread_id in _order:
+		var t: Dictionary = _threads[thread_id]
+		threads[thread_id] = {
+			"messages": (t["messages"] as Array).duplicate(true),
+			"unread": int(t.get("unread", 0)),
+		}
+	return {"minutes": _minutes, "threads": threads}
+
+
+func deserialize(d: Dictionary) -> void:
+	_minutes = int(d.get("minutes", _minutes))
+	_clock_label.text = _clock_string()
+	var threads: Dictionary = d.get("threads", {})
+	for thread_id in threads.keys():
+		if not _threads.has(thread_id):
+			continue
+		var src: Dictionary = threads[thread_id]
+		var msgs: Array = []
+		for m in src.get("messages", []):
+			msgs.append({
+				"from": String(m.get("from", "them")),
+				"text": String(m.get("text", "")),
+				"time": String(m.get("time", "")),
+			})
+		(_threads[thread_id] as Dictionary)["messages"] = msgs
+		(_threads[thread_id] as Dictionary)["unread"] = int(src.get("unread", 0))
+	clear_quick_reply()
+	_render_thread_list()
+	if _open and _current_thread != "":
+		_render_conversation(_current_thread)
+
+
 func is_open() -> bool:
 	return _open
 

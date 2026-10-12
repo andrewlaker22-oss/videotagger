@@ -8,6 +8,9 @@
 [ext_resource type="Script" path="res://scripts/phone_ui.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/chore_manager.gd" id="7"]
 [ext_resource type="Script" path="res://scripts/unpack_manager.gd" id="8"]
+[ext_resource type="Script" path="res://scripts/menu_ui.gd" id="9"]
+[ext_resource type="Script" path="res://scripts/settings_manager.gd" id="10"]
+[ext_resource type="Script" path="res://scripts/save_manager.gd" id="11"]
 
 [sub_resource type="CapsuleShape3D" id="cap"]
 radius = 0.35
@@ -67,3 +70,12 @@ script = ExtResource("7")
 
 [node name="UnpackManager" type="Node" parent="."]
 script = ExtResource("8")
+
+[node name="MenuUI" type="CanvasLayer" parent="."]
+script = ExtResource("9")
+
+[node name="SettingsManager" type="Node" parent="."]
+script = ExtResource("10")
+
+[node name="SaveManager" type="Node" parent="."]
+script = ExtResource("11")

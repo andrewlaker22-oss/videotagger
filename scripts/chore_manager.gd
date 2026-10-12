@@ -27,6 +27,7 @@ var in_wash_mode: bool = false
 
 var _trash_done := 0
 var _carrying := ""  # bag id currently carried, "" = empty-handed
+var _bags_taken: Array = []  # bag ids no longer in the world (picked up)
 var _first_deposit := false
 var _dishes_done := 0
 var _dish_progress := 0.0
@@ -107,6 +108,45 @@ func get_checklist() -> String:
 
 
 # ------------------------------------------------------------------
+# Save/load support. Carrying is never restored (the bag simply stays
+# taken); mid-scrub progress resets to zero.
+# ------------------------------------------------------------------
+
+func serialize() -> Dictionary:
+	return {
+		"trash_done": _trash_done,
+		"bags_taken": _bags_taken.duplicate(),
+		"first_deposit": _first_deposit,
+		"dishes_done": _dishes_done,
+	}
+
+
+func deserialize(d: Dictionary) -> void:
+	_carrying = ""
+	if _bag_mesh != null:
+		_bag_mesh.visible = false
+	if _player != null:
+		_player.speed_factor = 1.0
+	_trash_done = int(d.get("trash_done", 0))
+	_first_deposit = bool(d.get("first_deposit", false))
+	for bag_id in d.get("bags_taken", []):
+		var bid := String(bag_id)
+		_apt.hide_trash_bag(bid)
+		_disable_interactable(bid)
+		if not _bags_taken.has(bid):
+			_bags_taken.append(bid)
+	_dishes_done = int(d.get("dishes_done", 0))
+	_dish_progress = 0.0
+	_scrubbing = false
+	for i in range(_dishes_done):
+		_apt.dish_to_rack(i, true)
+	_active_plate = _apt.get_dish_plate(_dishes_done)
+	if _dishes_done >= DISH_TOTAL:
+		_disable_interactable("sink")
+	changed.emit()
+
+
+# ------------------------------------------------------------------
 # Trash: fetch-and-carry
 # ------------------------------------------------------------------
 
@@ -115,6 +155,8 @@ func _pickup_bag(bag_id: String) -> void:
 		_ui.show_toast("One bag at a time.")
 		return
 	_carrying = bag_id
+	if not _bags_taken.has(bag_id):
+		_bags_taken.append(bag_id)
 	_apt.hide_trash_bag(bag_id)
 	_disable_interactable(bag_id)
 	_bag_mesh.visible = true
