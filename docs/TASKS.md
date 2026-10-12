@@ -45,4 +45,4 @@ pick it up without reading the whole codebase — start at `docs/AI_HANDOFF.md`.
 - [ ] Analytics-free playtest logging (which choices players pick).
 
 ## Done
-- [x] Prototype: apartment, story beats, timed choices, 3 endings, docs, repo scaffold.
+- [x] Prototype: two-story house + basement level, 17 story beats (incl. basement breaker), timed choices, 3 endings, docs, repo scaffold.

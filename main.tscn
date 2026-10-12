@@ -33,8 +33,7 @@ environment = SubResource("env")
 script = ExtResource("2")
 
 [node name="Player" type="CharacterBody3D" parent="."]
-position = Vector3(-9, 0.1, 0)
-rotation = Vector3(0, -1.5707964, 0)
+position = Vector3(0.8, 0.1, 5.9)
 script = ExtResource("3")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]

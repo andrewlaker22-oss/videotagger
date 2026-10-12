@@ -1,10 +1,10 @@
 # WATCHED
 
 A Telltale-style **3D psychological-horror narrative prototype** (stalker theme) built in **Godot 4.7.2**.
-~10 minutes of playtime. First-person exploration of a small apartment, timed dialogue choices
+~10 minutes of playtime. First-person exploration of a two-story house, timed dialogue choices
 ("Mara will remember that"), and three endings.
 
-You play **Mara**, coming home late at night to find her apartment door ajar.
+You play **Mara**, coming home late at night to find her front door ajar.
 
 ## Requirements
 
@@ -30,10 +30,11 @@ No setup, no assets to download, no autoloads — everything is procedural place
 | Esc | Release the mouse |
 | R | Restart (on the ending screen) |
 
-**Reaching each ending (for testing):** E/click through the intro → walk to the
-kitchen (east side) → read the fridge note → answer or ignore the phone → bedroom:
-photo on the nightstand, closet → bathroom: mirror → kitchen: the knife on the
-counter → after the blackout, choose **fire escape** (ESCAPE), **closet**
+**Reaching each ending (for testing):** E/click through the intro → kitchen
+(east, ground floor) → read the fridge note → answer or ignore the phone →
+upstairs: bedroom (photo on the nightstand, closet), bathroom (mirror) →
+kitchen: the knife on the counter → after the blackout, go down to the basement
+breaker box → flip the breaker → choose **fire escape** (ESCAPE), **closet**
 (HIDE), or **door** (CONFRONT).
 
 ## Project structure
@@ -49,7 +50,7 @@ watched/
 │   ├── player.gd          # First-person controller (WASD + mouse, E/click)
 │   ├── dialogue_ui.gd     # HUD, dialogue box, timed choices, toasts, ending screen
 │   ├── interactable.gd    # Raycast hotspot (id + prompt); story meaning lives in story_data
-│   ├── apartment_builder.gd # Builds the whole level from data tables (placeholder art)
+│   ├── apartment_builder.gd # Builds the whole level (two-story house) from data tables
 │   └── audio_manager.gd   # Stubbed sfx/music hooks (prints for now)
 ├── assets/README.md       # Placeholder-art notes; where real art goes
 ├── audio/README.md        # Placeholder-audio notes; sfx hook list

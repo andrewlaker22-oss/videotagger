@@ -1,50 +1,82 @@
 class_name ApartmentBuilder
 extends Node3D
-## Procedurally builds the WATCHED apartment from data tables.
+## Procedurally builds the WATCHED house from data tables.
 ##
 ## All geometry is primitives (boxes, quads) with dark, moody materials —
 ## pure placeholder art. Nothing here is load-bearing for the story: the
-## GameManager only calls open_front_door(), set_blackout() and
-## disable_all_interactables(). To replace placeholders with real art, see
-## assets/README.md.
+## GameManager only calls open_front_door(), set_blackout(),
+## stutter_power() and disable_all_interactables(). To replace placeholders
+## with real art, see assets/README.md.
 ##
-## Floor plan (meters, XZ plane, y-up). Apartment: x in [-6, 6], z in [-4, 4].
-## Hallway stub: x in [-10, -6], z in [-1.5, 1.5]. Front door in the west wall.
-## Rooms: entry/living (west, open), kitchen (east-north), bedroom
-## (east-south), bathroom (small, carved out of the living area).
+## Floor plan (meters, XZ plane, y-up). House: x in [-7, 7], z in [-5, 5].
+## Three stories, 2.7 m each: basement floor at y=-2.7, ground at y=0,
+## upper at y=2.7, roof slab at y=5.4.
+##
+## GROUND: porch + foyer (front door in south wall), living room (west, TV),
+##   kitchen (east), stair hall (both staircases).
+## UPPER: hall, bedroom (east, photo + closet), bathroom (north-west, mirror),
+##   open landing (south).
+## BASEMENT: open dim space, storage boxes, breaker box on the east wall.
+##
+## Stairs are visual steps (no collision) plus ONE sloped ramp StaticBody3D
+## each, gentle enough (~29 deg) for the CharacterBody3D player to walk.
 
-const WALL_H := 3.0
+const WALL_H := 2.7
 const WALL_T := 0.18
 
-# Wall segments as [Vector2, Vector2] in the XZ plane. Door gaps are made by
-# splitting a wall into two segments; see the plan above.
+const BASE_Y := -2.7
+const GROUND_Y := 0.0
+const UPPER_Y := 2.7
+
+# Wall segments as [Vector2, Vector2, y_base] in the XZ plane. Door gaps are
+# made by splitting a wall into two segments; see the plan above.
 const WALLS: Array = [
-	# Outer shell (west wall has the front-door gap, z in [-0.55, 0.55]).
-	[Vector2(-6, -4), Vector2(6, -4)],
-	[Vector2(-6, 4), Vector2(6, 4)],
-	[Vector2(6, -4), Vector2(6, 4)],
-	[Vector2(-6, -4), Vector2(-6, -0.55)],
-	[Vector2(-6, 0.55), Vector2(-6, 4)],
-	# Hallway stub.
-	[Vector2(-10, -1.5), Vector2(-6, -1.5)],
-	[Vector2(-10, 1.5), Vector2(-6, 1.5)],
-	[Vector2(-10, -1.5), Vector2(-10, 1.5)],
-	# Partition x=2 (living | kitchen/bedroom). Gaps: kitchen door z in
-	# [-2.6, -1.4], bedroom door z in [1.6, 2.8].
-	[Vector2(2, -4), Vector2(2, -2.6)],
-	[Vector2(2, -1.4), Vector2(2, 1.6)],
-	[Vector2(2, 2.8), Vector2(2, 4)],
-	# Partition z=0 (kitchen | bedroom).
-	[Vector2(2, 0), Vector2(6, 0)],
-	# Bathroom (x in [-1, 2], z in [-4, -1.5]). Door gap z in [-3.2, -2.2].
-	[Vector2(-1, -4), Vector2(-1, -3.2)],
-	[Vector2(-1, -2.2), Vector2(-1, -1.5)],
-	[Vector2(-1, -1.5), Vector2(2, -1.5)],
+	# ---- GROUND FLOOR (y0 = 0). Front-door gap in south wall, x in [0.2, 1.4].
+	[Vector2(-7, -5), Vector2(7, -5), GROUND_Y],
+	[Vector2(-7, 5), Vector2(0.2, 5), GROUND_Y],
+	[Vector2(1.4, 5), Vector2(7, 5), GROUND_Y],
+	[Vector2(-7, -5), Vector2(-7, 5), GROUND_Y],
+	[Vector2(7, -5), Vector2(7, 5), GROUND_Y],
+	# x=-1 (living | stair hall + foyer). Wide opening z in [0, 2].
+	[Vector2(-1, -5), Vector2(-1, 0), GROUND_Y],
+	[Vector2(-1, 2), Vector2(-1, 5), GROUND_Y],
+	# x=2.5 (hall/foyer | kitchen). Kitchen door z in [-0.6, 0.6].
+	[Vector2(2.5, -5), Vector2(2.5, -0.6), GROUND_Y],
+	[Vector2(2.5, 0.6), Vector2(2.5, 5), GROUND_Y],
+	# z=1 (foyer | stair hall). Opening x in [-0.8, 2.0].
+	[Vector2(-1, 1), Vector2(-0.8, 1), GROUND_Y],
+	[Vector2(2.0, 1), Vector2(2.5, 1), GROUND_Y],
+	# ---- UPPER FLOOR (y0 = 2.7).
+	[Vector2(-7, -5), Vector2(7, -5), UPPER_Y],
+	[Vector2(-7, 5), Vector2(7, 5), UPPER_Y],
+	[Vector2(-7, -5), Vector2(-7, 5), UPPER_Y],
+	[Vector2(7, -5), Vector2(7, 5), UPPER_Y],
+	# x=-1 (landing | upper hall). Opening z in [-0.5, 0.5].
+	[Vector2(-1, -5), Vector2(-1, -0.5), UPPER_Y],
+	[Vector2(-1, 0.5), Vector2(-1, 1), UPPER_Y],
+	# x=2.5 (hall | bedroom). Bedroom door z in [-0.6, 0.6].
+	[Vector2(2.5, -5), Vector2(2.5, -0.6), UPPER_Y],
+	[Vector2(2.5, 0.6), Vector2(2.5, 1), UPPER_Y],
+	# z=1 (hall | landing). Opening x in [-0.8, 2.0].
+	[Vector2(-1, 1), Vector2(-0.8, 1), UPPER_Y],
+	[Vector2(2.0, 1), Vector2(2.5, 1), UPPER_Y],
+	# z=1 (bedroom | landing).
+	[Vector2(2.5, 1), Vector2(7, 1), UPPER_Y],
+	# Bathroom (x in [-7, -3.5], z in [-5, -1]). Door in east wall, z in [-3.2, -2.2].
+	[Vector2(-3.5, -5), Vector2(-3.5, -3.2), UPPER_Y],
+	[Vector2(-3.5, -2.2), Vector2(-3.5, -1), UPPER_Y],
+	[Vector2(-7, -1), Vector2(-3.5, -1), UPPER_Y],
+	# ---- BASEMENT (y0 = -2.7). Open plan: outer shell only.
+	[Vector2(-7, -5), Vector2(7, -5), BASE_Y],
+	[Vector2(-7, 5), Vector2(7, 5), BASE_Y],
+	[Vector2(-7, -5), Vector2(-7, 5), BASE_Y],
+	[Vector2(7, -5), Vector2(7, 5), BASE_Y],
 ]
 
 var _mats: Dictionary = {}
 var _lights: Array = []  # Dictionaries: {node, base, mode, phase}.
 var _blackout: bool = false
+var _stutter_until: float = 0.0
 var _door_pivot: Node3D = null
 var _door_open: bool = false
 
@@ -52,11 +84,15 @@ var _door_open: bool = false
 func _ready() -> void:
 	_make_materials()
 	_build_shell()
-	_build_hallway_props()
+	_build_stairs()
+	_build_porch()
+	_build_foyer()
 	_build_living_room()
 	_build_kitchen()
 	_build_bedroom()
 	_build_bathroom()
+	_build_landing()
+	_build_basement()
 	_build_front_door()
 	_build_interactables()
 	_build_lights()
@@ -64,6 +100,10 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	var t: float = Time.get_ticks_msec() / 1000.0
+	if _stutter_until > 0.0 and t >= _stutter_until:
+		_stutter_until = 0.0
+		_blackout = true
+	var stuttering := _stutter_until > 0.0
 	for entry in _lights:
 		var l: OmniLight3D = entry["node"]
 		if _blackout:
@@ -72,17 +112,23 @@ func _process(delta: float) -> void:
 		var base: float = entry["base"]
 		var phase: float = entry["phase"]
 		var e := base
-		match String(entry["mode"]):
-			"steady":
-				e = base * (0.95 + 0.05 * sin(t * 11.0 + phase))
-			"buzz":
-				e = base * (0.92 + 0.08 * sin(t * 43.0 + phase))
-				if fmod(t * 3.1 + phase, 1.0) < 0.05:
-					e *= 0.25
-			"dying":
-				e = base * (0.55 + 0.45 * sin(t * 1.7 + phase))
-				if sin(t * 8.3 + phase * 2.7) > 0.93:
-					e *= 0.08
+		if stuttering:
+			# Power gasps back for a heartbeat: violent flicker, then it dies.
+			e = base * (0.15 + 0.85 * absf(sin(t * 27.0 + phase * 3.1)))
+			if fmod(t * 7.0 + phase, 1.0) < 0.12:
+				e *= 0.1
+		else:
+			match String(entry["mode"]):
+				"steady":
+					e = base * (0.95 + 0.05 * sin(t * 11.0 + phase))
+				"buzz":
+					e = base * (0.92 + 0.08 * sin(t * 43.0 + phase))
+					if fmod(t * 3.1 + phase, 1.0) < 0.05:
+						e *= 0.25
+				"dying":
+					e = base * (0.55 + 0.45 * sin(t * 1.7 + phase))
+					if sin(t * 8.3 + phase * 2.7) > 0.93:
+						e *= 0.08
 		l.light_energy = e
 
 
@@ -102,10 +148,22 @@ func set_blackout(value: bool) -> void:
 	_blackout = value
 
 
+## Briefly restores power with a violent flicker, then kills it again.
+## Used by the breaker beat.
+func stutter_power(duration: float = 1.6) -> void:
+	_blackout = false
+	_stutter_until = Time.get_ticks_msec() / 1000.0 + duration
+
+
 func disable_all_interactables() -> void:
 	for child in get_children():
 		if child is Interactable:
-			(child as Interactable).disable()
+			var inter := child as Interactable
+			# The breaker box must stay usable: the breaker beat needs it
+			# AFTER the blackout disables everything else.
+			if inter.interact_id == "breaker_box":
+				continue
+			inter.disable()
 
 
 # ------------------------------------------------------------------
@@ -127,6 +185,7 @@ func _mat(albedo: Color, roughness: float = 0.9, metallic: float = 0.0, emission
 func _make_materials() -> void:
 	_mats["wall"] = _mat(Color(0.16, 0.16, 0.19))
 	_mats["floor"] = _mat(Color(0.23, 0.17, 0.12), 0.8)
+	_mats["concrete"] = _mat(Color(0.13, 0.13, 0.15), 0.95)
 	_mats["ceiling"] = _mat(Color(0.1, 0.1, 0.12))
 	_mats["door"] = _mat(Color(0.3, 0.2, 0.13), 0.7)
 	_mats["wood"] = _mat(Color(0.32, 0.22, 0.14), 0.75)
@@ -141,6 +200,7 @@ func _make_materials() -> void:
 	_mats["screen"] = _mat(Color(0.02, 0.03, 0.05), 0.4, 0.0, Color(0.05, 0.08, 0.12))
 	_mats["lamp_glow"] = _mat(Color(1.0, 0.8, 0.55), 0.6, 0.0, Color(1.0, 0.7, 0.4))
 	_mats["tube_glow"] = _mat(Color(0.8, 1.0, 0.9), 0.6, 0.0, Color(0.5, 0.8, 0.7))
+	_mats["led_red"] = _mat(Color(0.5, 0.05, 0.05), 0.6, 0.0, Color(1.0, 0.1, 0.1))
 
 
 func _mat_by(mat_name: String) -> StandardMaterial3D:
@@ -183,11 +243,19 @@ func _add_quad(size: Vector2, pos: Vector3, mat_name: String, rot_y: float = 0.0
 	return mi
 
 
-func _add_wall(a: Vector2, b: Vector2) -> void:
+func _add_wall(a: Vector2, b: Vector2, y0: float) -> void:
 	var length := a.distance_to(b)
 	var center := (a + b) * 0.5
 	var angle := atan2(b.x - a.x, b.y - a.y)
-	_add_box(Vector3(WALL_T, WALL_H, length), Vector3(center.x, WALL_H * 0.5, center.y), "wall", angle)
+	_add_box(Vector3(WALL_T, WALL_H, length), Vector3(center.x, y0 + WALL_H * 0.5, center.y), "wall", angle)
+
+
+func _add_guard(a: Vector2, b: Vector2, y0: float, h: float = 1.0) -> void:
+	# Low guard wall around a stairwell opening.
+	var length := a.distance_to(b)
+	var center := (a + b) * 0.5
+	var angle := atan2(b.x - a.x, b.y - a.y)
+	_add_box(Vector3(WALL_T, h, length), Vector3(center.x, y0 + h * 0.5, center.y), "wall", angle)
 
 
 func _add_light(pos: Vector3, color: Color, energy: float, light_range: float, flicker_mode: String) -> void:
@@ -216,120 +284,230 @@ func _add_interactable(interact_id: String, prompt: String, pos: Vector3, extent
 
 
 # ------------------------------------------------------------------
-# Rooms
+# Shell: walls, floor slabs (with stairwell holes), porch
 # ------------------------------------------------------------------
 
 func _build_shell() -> void:
 	for w in WALLS:
-		_add_wall(w[0], w[1])
-	# Floors and ceilings (slightly oversized to seal corners).
-	_add_box(Vector3(12.6, 0.1, 8.6), Vector3(0, -0.05, 0), "floor")
-	_add_box(Vector3(12.6, 0.1, 8.6), Vector3(0, 3.05, 0), "ceiling")
-	_add_box(Vector3(4.6, 0.1, 3.6), Vector3(-8, -0.05, 0), "floor")
-	_add_box(Vector3(4.6, 0.1, 3.6), Vector3(-8, 3.05, 0), "ceiling")
+		_add_wall(w[0], w[1], w[2])
+	# Basement floor slab (top at y=-2.7).
+	_add_box(Vector3(14.6, 0.15, 10.6), Vector3(0, -2.775, 0), "concrete")
+	# Ground slab = basement ceiling (top y=0). Hole over the basement stair:
+	# x in [0.7, 2.3], z in [-4.0, 0.9] (down-run at x in [0.9, 2.1]).
+	_add_box(Vector3(8.0, 0.15, 10.6), Vector3(-3.3, -0.075, 0), "floor")
+	_add_box(Vector3(5.0, 0.15, 10.6), Vector3(4.8, -0.075, 0), "floor")
+	_add_box(Vector3(1.6, 0.15, 4.4), Vector3(1.5, -0.075, 3.1), "floor")
+	_add_box(Vector3(1.6, 0.15, 1.3), Vector3(1.5, -0.075, -4.65), "floor")
+	# Upper slab = ground ceiling (top y=2.7). Hole over the upper stair:
+	# x in [-0.9, 0.7], z in [-4.0, 0.9] (up-run at x in [-0.7, 0.5]).
+	_add_box(Vector3(6.4, 0.15, 10.6), Vector3(-4.1, 2.625, 0), "floor")
+	_add_box(Vector3(6.6, 0.15, 10.6), Vector3(4.0, 2.625, 0), "floor")
+	_add_box(Vector3(1.6, 0.15, 4.4), Vector3(-0.1, 2.625, 3.1), "floor")
+	_add_box(Vector3(1.6, 0.15, 1.3), Vector3(-0.1, 2.625, -4.65), "floor")
+	# Roof slab (top y=5.4).
+	_add_box(Vector3(14.6, 0.15, 10.6), Vector3(0, 5.325, 0), "ceiling")
 
 
-func _build_hallway_props() -> void:
-	# Bare hallway: a flickering cool light is all it gets.
-	pass
+func _build_stairs() -> void:
+	# Up-run: ground -> upper, x in [-0.7, 0.5]. Down-run: ground -> basement,
+	# x in [0.9, 2.1]. Both run z: 0.9 -> -4.0, rise 2.7 (~29 deg).
+	_build_stair_run(-0.1, true)
+	_build_stair_run(1.5, false)
+	# Guard walls around the stairwell holes.
+	# Upper floor, hole x in [-0.9, 0.7], z in [-4.0, 0.9] (north edge is the stair exit).
+	_add_guard(Vector2(-0.9, -4.0), Vector2(-0.9, 0.9), UPPER_Y)
+	_add_guard(Vector2(0.7, -4.0), Vector2(0.7, 0.9), UPPER_Y)
+	_add_guard(Vector2(-0.9, 0.9), Vector2(0.7, 0.9), UPPER_Y)
+	# Ground floor, hole x in [0.7, 2.3], z in [-4.0, 0.9] (south edge is the stair entry).
+	_add_guard(Vector2(0.7, -4.0), Vector2(0.7, 0.9), GROUND_Y)
+	_add_guard(Vector2(2.3, -4.0), Vector2(2.3, 0.9), GROUND_Y)
+	_add_guard(Vector2(0.7, -4.0), Vector2(2.3, -4.0), GROUND_Y)
+
+
+func _build_stair_run(x_center: float, up: bool) -> void:
+	var steps := 14
+	var run := 4.9
+	var rise := 2.7
+	var dir := 1.0 if up else -1.0
+	# Visual steps: thin boxes, NO collision.
+	for i in range(steps):
+		var top_y := dir * (i + 1) * (rise / steps)
+		var z := 0.9 - (i + 0.5) * (run / steps)
+		_add_box(Vector3(1.2, 0.19, run / steps + 0.02),
+			Vector3(x_center, top_y - 0.095, z), "wood", 0.0, false)
+	# ONE sloped ramp StaticBody3D for collision.
+	var angle := atan2(rise, run)
+	var length := sqrt(run * run + rise * rise) + 0.02
+	var normal := Vector3(0, cos(angle), dir * sin(angle))
+	var body := StaticBody3D.new()
+	body.position = Vector3(x_center, dir * rise * 0.5, -1.55) - 0.06 * normal
+	body.rotation.x = dir * angle
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.2, 0.12, length)
+	mi.mesh = bm
+	mi.material_override = _mat_by("wood")
+	body.add_child(mi)
+	var cs := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(1.2, 0.12, length)
+	cs.shape = shape
+	body.add_child(cs)
+	add_child(body)
+
+
+# ------------------------------------------------------------------
+# Rooms
+# ------------------------------------------------------------------
+
+func _build_porch() -> void:
+	# Small stoop outside the front door (x in [-0.4, 2.0], z in [5.0, 6.4]).
+	_add_box(Vector3(2.4, 0.15, 1.4), Vector3(0.8, -0.075, 5.7), "concrete")
+	# Railings so the player can't walk off into the dark.
+	_add_box(Vector3(0.08, 0.9, 1.4), Vector3(-0.4, 0.45, 5.7), "wood")
+	_add_box(Vector3(0.08, 0.9, 1.4), Vector3(2.0, 0.45, 5.7), "wood")
+	_add_box(Vector3(2.48, 0.9, 0.08), Vector3(0.8, 0.45, 6.4), "wood")
+	# Doormat.
+	_add_box(Vector3(0.9, 0.03, 0.5), Vector3(0.8, 0.015, 5.5), "fabric_dark", 0.0, false)
+
+
+func _build_foyer() -> void:
+	# Rug and a small side table.
+	_add_box(Vector3(2.0, 0.03, 1.4), Vector3(0.75, 0.015, 3.5), "fabric_dark", 0.0, false)
+	_add_box(Vector3(0.8, 0.75, 0.4), Vector3(-0.5, 0.375, 4.6), "wood")
+	# Stair-hall runner (no collision).
+	_add_box(Vector3(2.4, 0.03, 4.6), Vector3(0.75, 0.015, -1.2), "fabric_dark", 0.0, false)
 
 
 func _build_living_room() -> void:
-	# Couch (faces +z, toward the TV on the south wall).
-	_add_box(Vector3(2.2, 0.45, 0.95), Vector3(-3.5, 0.225, 1.8), "fabric")
-	_add_box(Vector3(2.2, 0.75, 0.28), Vector3(-3.5, 0.7, 1.35), "fabric")
-	_add_box(Vector3(0.28, 0.65, 0.95), Vector3(-4.6, 0.55, 1.8), "fabric")
-	_add_box(Vector3(0.28, 0.65, 0.95), Vector3(-2.4, 0.55, 1.8), "fabric")
+	# Couch faces north, toward the TV on the north wall.
+	_add_box(Vector3(2.2, 0.45, 0.95), Vector3(-4, 0.225, -2.6), "fabric")
+	_add_box(Vector3(2.2, 0.75, 0.28), Vector3(-4, 0.7, -2.15), "fabric")
+	_add_box(Vector3(0.28, 0.65, 0.95), Vector3(-5.1, 0.55, -2.6), "fabric")
+	_add_box(Vector3(0.28, 0.65, 0.95), Vector3(-2.9, 0.55, -2.6), "fabric")
 	# Coffee table and rug.
-	_add_box(Vector3(1.2, 0.4, 0.6), Vector3(-3.5, 0.2, 2.9), "wood")
-	_add_box(Vector3(3.0, 0.03, 2.0), Vector3(-3.5, 0.015, 2.4), "fabric_dark", 0.0, false)
-	# TV stand + dead TV.
-	_add_box(Vector3(1.8, 0.5, 0.5), Vector3(-3.5, 0.25, 3.65), "wood")
-	_add_box(Vector3(1.5, 0.85, 0.12), Vector3(-3.5, 1.15, 3.65), "dark")
-	_add_quad(Vector2(1.35, 0.7), Vector3(-3.5, 1.15, 3.58), "screen", PI)
+	_add_box(Vector3(1.2, 0.4, 0.6), Vector3(-4, 0.2, -3.5), "wood")
+	_add_box(Vector3(3.0, 0.03, 2.2), Vector3(-4, 0.015, -3.2), "fabric_dark", 0.0, false)
+	# TV stand + dead TV on the north wall.
+	_add_box(Vector3(1.8, 0.5, 0.5), Vector3(-4, 0.25, -4.55), "wood")
+	_add_box(Vector3(1.5, 0.85, 0.12), Vector3(-4, 1.15, -4.55), "dark")
+	_add_quad(Vector2(1.35, 0.7), Vector3(-4, 1.15, -4.48), "screen")
 	# Floor lamp beside the TV stand (placeholder boxes + emissive shade).
-	_add_box(Vector3(0.3, 0.06, 0.3), Vector3(-2.3, 0.03, 3.55), "dark")
-	_add_box(Vector3(0.06, 1.6, 0.06), Vector3(-2.3, 0.8, 3.55), "dark")
-	_add_box(Vector3(0.4, 0.32, 0.4), Vector3(-2.3, 1.72, 3.55), "lamp_glow", 0.0, false)
-	# Floor lamp (the flickering warm light lives here).
-	_add_box(Vector3(0.06, 1.7, 0.06), Vector3(-5.0, 0.85, 0.6), "dark")
-	_add_box(Vector3(0.35, 0.3, 0.35), Vector3(-5.0, 1.8, 0.6), "lamp_glow", 0.0, false)
+	_add_box(Vector3(0.3, 0.06, 0.3), Vector3(-2.6, 0.03, -4.4), "dark")
+	_add_box(Vector3(0.06, 1.6, 0.06), Vector3(-2.6, 0.8, -4.4), "dark")
+	_add_box(Vector3(0.4, 0.32, 0.4), Vector3(-2.6, 1.72, -4.4), "lamp_glow", 0.0, false)
+	# Second floor lamp with the dying flicker.
+	_add_box(Vector3(0.06, 1.7, 0.06), Vector3(-5.8, 0.85, -0.5), "dark")
+	_add_box(Vector3(0.35, 0.3, 0.35), Vector3(-5.8, 1.8, -0.5), "lamp_glow", 0.0, false)
 
 
 func _build_kitchen() -> void:
 	# Counter run along the north wall.
-	_add_box(Vector3(2.6, 0.9, 0.65), Vector3(4.0, 0.45, -3.62), "wood")
+	_add_box(Vector3(3.4, 0.9, 0.65), Vector3(4.9, 0.45, -4.62), "wood")
 	# Stove.
-	_add_box(Vector3(0.7, 0.9, 0.65), Vector3(2.6, 0.45, -3.62), "dark")
-	# Fridge with the note on its front (front face at z = -3.15).
-	_add_box(Vector3(0.85, 1.9, 0.8), Vector3(5.45, 0.95, -3.55), "appliance")
-	_add_box(Vector3(0.05, 0.5, 0.06), Vector3(5.12, 1.2, -3.13), "metal", 0.0, false)
-	_add_quad(Vector2(0.28, 0.34), Vector3(5.45, 1.35, -3.14), "paper")
+	_add_box(Vector3(0.7, 0.9, 0.65), Vector3(3.35, 0.45, -4.62), "dark")
+	# Fridge with the note on its front (front face at z = -4.15).
+	_add_box(Vector3(0.85, 1.9, 0.8), Vector3(6.1, 0.95, -4.55), "appliance")
+	_add_box(Vector3(0.05, 0.5, 0.06), Vector3(5.77, 1.2, -4.13), "metal", 0.0, false)
+	_add_quad(Vector2(0.28, 0.34), Vector3(6.1, 1.35, -4.14), "paper")
 	# The knife, displayed in the middle of the counter.
-	_add_box(Vector3(0.28, 0.015, 0.045), Vector3(4.0, 0.93, -3.62), "metal", 0.5, false)
-	_add_box(Vector3(0.12, 0.03, 0.05), Vector3(3.82, 0.93, -3.55), "dark", 0.5, false)
+	_add_box(Vector3(0.28, 0.015, 0.045), Vector3(4.9, 0.93, -4.62), "metal", 0.5, false)
+	_add_box(Vector3(0.12, 0.03, 0.05), Vector3(4.72, 0.93, -4.55), "dark", 0.5, false)
 
 
 func _build_bedroom() -> void:
-	# Bed.
-	_add_box(Vector3(1.3, 0.3, 2.1), Vector3(4.6, 0.15, 2.9), "wood")
-	_add_box(Vector3(1.24, 0.25, 2.04), Vector3(4.6, 0.42, 2.9), "bedding")
-	_add_box(Vector3(0.7, 0.12, 0.4), Vector3(4.6, 0.6, 2.0), "paper", 0.0, false)
-	_add_box(Vector3(1.24, 0.08, 1.2), Vector3(4.6, 0.58, 3.3), "fabric_dark", 0.0, false)
+	var y := UPPER_Y
+	# Bed, headboard against the north wall.
+	_add_box(Vector3(1.6, 0.3, 2.2), Vector3(5.5, y + 0.15, -3.0), "wood")
+	_add_box(Vector3(1.54, 0.25, 2.14), Vector3(5.5, y + 0.42, -3.0), "bedding")
+	_add_box(Vector3(0.7, 0.12, 0.4), Vector3(5.5, y + 0.6, -3.9), "paper", 0.0, false)
+	_add_box(Vector3(1.54, 0.08, 1.2), Vector3(5.5, y + 0.58, -2.5), "fabric_dark", 0.0, false)
 	# Nightstand with the framed photo.
-	_add_box(Vector3(0.55, 0.55, 0.55), Vector3(3.35, 0.275, 3.5), "wood")
-	_add_box(Vector3(0.22, 0.28, 0.04), Vector3(3.35, 0.7, 3.5), "dark", 0.0, false)
+	_add_box(Vector3(0.55, 0.55, 0.55), Vector3(4.3, y + 0.275, -4.5), "wood")
+	_add_box(Vector3(0.22, 0.28, 0.04), Vector3(4.3, y + 0.7, -4.5), "dark", 0.0, false)
 	# Wardrobe / closet.
-	_add_box(Vector3(1.3, 2.0, 0.6), Vector3(5.35, 1.0, 3.55), "wood")
-	_add_box(Vector3(0.04, 0.18, 0.04), Vector3(5.15, 1.1, 3.23), "metal", 0.0, false)
-	_add_box(Vector3(0.04, 0.18, 0.04), Vector3(5.55, 1.1, 3.23), "metal", 0.0, false)
+	_add_box(Vector3(1.3, 2.0, 0.6), Vector3(6.35, y + 1.0, -4.6), "wood")
+	_add_box(Vector3(0.04, 0.18, 0.04), Vector3(6.15, y + 1.1, -4.28), "metal", 0.0, false)
+	_add_box(Vector3(0.04, 0.18, 0.04), Vector3(6.55, y + 1.1, -4.28), "metal", 0.0, false)
 
 
 func _build_bathroom() -> void:
+	var y := UPPER_Y
 	# Sink + mirror (mirror faces +z, into the room).
-	_add_box(Vector3(0.35, 0.7, 0.35), Vector3(1.3, 0.35, -3.6), "appliance")
-	_add_box(Vector3(0.6, 0.15, 0.5), Vector3(1.3, 0.78, -3.6), "appliance")
-	_add_quad(Vector2(0.7, 0.9), Vector3(1.3, 1.7, -3.9), "mirror")
+	_add_box(Vector3(0.35, 0.7, 0.35), Vector3(-6.3, y + 0.35, -4.5), "appliance")
+	_add_box(Vector3(0.6, 0.15, 0.5), Vector3(-6.3, y + 0.78, -4.5), "appliance")
+	_add_quad(Vector2(0.7, 0.9), Vector3(-6.3, y + 1.7, -4.9), "mirror")
 	# Toilet.
-	_add_box(Vector3(0.45, 0.4, 0.6), Vector3(0.1, 0.2, -3.55), "appliance")
-	_add_box(Vector3(0.45, 0.5, 0.2), Vector3(0.1, 0.65, -3.8), "appliance")
+	_add_box(Vector3(0.45, 0.4, 0.6), Vector3(-5.2, y + 0.2, -4.5), "appliance")
+	_add_box(Vector3(0.45, 0.5, 0.2), Vector3(-5.2, y + 0.65, -4.75), "appliance")
 	# Tub.
-	_add_box(Vector3(1.7, 0.55, 0.75), Vector3(-0.35, 0.275, -2.0), "appliance")
+	_add_box(Vector3(1.7, 0.55, 0.75), Vector3(-4.6, y + 0.275, -2.0), "appliance")
 	# Fluorescent tube fixture.
-	_add_box(Vector3(1.2, 0.06, 0.15), Vector3(0.5, 2.95, -2.75), "tube_glow", 0.0, false)
+	_add_box(Vector3(1.2, 0.06, 0.15), Vector3(-5.5, y + 2.55, -3.0), "tube_glow", 0.0, false)
+
+
+func _build_landing() -> void:
+	var y := UPPER_Y
+	# Bookshelf + rug for the open landing.
+	_add_box(Vector3(1.2, 1.8, 0.35), Vector3(-6.8, y + 0.9, 3.0), "wood")
+	_add_box(Vector3(2.4, 0.03, 1.8), Vector3(-4.0, y + 0.015, 3.0), "fabric_dark", 0.0, false)
+
+
+func _build_basement() -> void:
+	var y := BASE_Y
+	# Support columns.
+	_add_box(Vector3(0.3, 2.7, 0.3), Vector3(-3, y + 1.35, 0), "concrete")
+	_add_box(Vector3(0.3, 2.7, 0.3), Vector3(3, y + 1.35, 0), "concrete")
+	# Storage boxes.
+	_add_box(Vector3(0.9, 0.9, 0.9), Vector3(-4.5, y + 0.45, -3.0), "wood")
+	_add_box(Vector3(0.7, 0.7, 0.7), Vector3(-5.4, y + 0.35, -2.3), "wood")
+	_add_box(Vector3(0.7, 0.7, 0.7), Vector3(-4.5, y + 1.25, -3.0), "wood", 0.3, false)
+	_add_box(Vector3(1.0, 0.8, 0.8), Vector3(4.2, y + 0.4, 2.5), "wood")
+	_add_box(Vector3(0.8, 0.8, 0.8), Vector3(-2.5, y + 0.4, 3.5), "wood")
+	_add_box(Vector3(0.8, 0.6, 0.6), Vector3(2.0, y + 0.3, -3.5), "wood")
+	# Breaker box on the east wall (inner face at x = 6.91).
+	_add_box(Vector3(0.15, 0.7, 0.5), Vector3(6.82, y + 1.35, -1.0), "metal")
+	# Tiny red LED so it can be found in the dark (emissive; blackout can't kill it).
+	_add_box(Vector3(0.03, 0.06, 0.06), Vector3(6.73, y + 1.6, -1.0), "led_red", 0.0, false)
 
 
 func _build_front_door() -> void:
-	# Hinged at the north edge of the doorway (x=-6, z=-0.55); the panel
-	# extends +z when closed. Slightly ajar at start; open_door() swings it
-	# ~106 degrees into the apartment.
+	# Hinged at the west edge of the doorway (x=0.2, z=5.0); the panel extends
+	# +x when closed. Slightly ajar at start; open_door() swings it ~106
+	# degrees inward, into the foyer.
 	_door_pivot = Node3D.new()
-	_door_pivot.position = Vector3(-6, 0, -0.55)
+	_door_pivot.position = Vector3(0.2, 0, 5.0)
 	_door_pivot.rotation.y = 0.15
 	add_child(_door_pivot)
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
-	bm.size = Vector3(0.08, 2.1, 1.06)
+	bm.size = Vector3(1.16, 2.1, 0.08)
 	mi.mesh = bm
 	mi.material_override = _mat_by("door")
-	mi.position = Vector3(0, 1.05, 0.53)
+	mi.position = Vector3(0.58, 1.05, 0)
 	_door_pivot.add_child(mi)
 
 
 func _build_interactables() -> void:
 	# interact_id must match a key in StoryData.get_trigger_beats().
-	_add_interactable("fridge_note", "Read the note", Vector3(5.45, 1.35, -2.95), Vector3(0.4, 0.4, 0.3))
-	_add_interactable("bedroom_photo", "Look at the photo", Vector3(3.35, 0.85, 3.5), Vector3(0.35, 0.35, 0.35))
-	_add_interactable("bedroom_closet", "Open the closet", Vector3(5.35, 1.1, 3.1), Vector3(0.7, 0.8, 0.3))
-	_add_interactable("bathroom_mirror", "Look in the mirror", Vector3(1.3, 1.6, -3.5), Vector3(0.45, 0.55, 0.3))
-	_add_interactable("kitchen_knife", "Look at the knife", Vector3(4.0, 1.1, -3.3), Vector3(0.5, 0.4, 0.4))
+	_add_interactable("fridge_note", "Read the note", Vector3(6.1, 1.35, -3.95), Vector3(0.4, 0.4, 0.3))
+	_add_interactable("bedroom_photo", "Look at the photo", Vector3(4.3, UPPER_Y + 0.85, -4.5), Vector3(0.35, 0.35, 0.35))
+	_add_interactable("bedroom_closet", "Open the closet", Vector3(6.35, UPPER_Y + 1.1, -4.15), Vector3(0.7, 0.8, 0.3))
+	_add_interactable("bathroom_mirror", "Look in the mirror", Vector3(-6.3, UPPER_Y + 1.6, -4.1), Vector3(0.45, 0.55, 0.35))
+	_add_interactable("kitchen_knife", "Look at the knife", Vector3(4.9, 1.1, -4.25), Vector3(0.5, 0.4, 0.4))
+	_add_interactable("breaker_box", "Flip the breaker", Vector3(6.4, BASE_Y + 1.35, -1.0), Vector3(0.35, 0.45, 0.35))
 
 
 func _build_lights() -> void:
 	# (position, color, energy, range, flicker mode)
-	_add_light(Vector3(-8, 2.6, 0), Color(0.6, 0.7, 1.0), 1.2, 7.0, "buzz")      # hallway
-	_add_light(Vector3(-5.0, 1.9, 0.6), Color(1.0, 0.75, 0.5), 2.2, 9.0, "dying") # living lamp
-	_add_light(Vector3(-2.3, 1.65, 3.55), Color(1.0, 0.8, 0.55), 1.4, 6.0, "steady") # TV lamp
-	_add_light(Vector3(4, 2.6, -2), Color(0.85, 0.9, 1.0), 1.6, 7.0, "steady")    # kitchen
-	_add_light(Vector3(4, 2.5, 2), Color(1.0, 0.8, 0.6), 1.2, 7.0, "steady")      # bedroom
-	_add_light(Vector3(0.5, 2.7, -2.75), Color(0.8, 1.0, 0.9), 1.4, 6.0, "buzz")  # bathroom
+	_add_light(Vector3(0.8, 2.4, 5.9), Color(0.6, 0.7, 1.0), 1.0, 6.0, "steady")      # porch
+	_add_light(Vector3(0.75, 2.4, 3.0), Color(1.0, 0.8, 0.6), 1.4, 7.0, "steady")     # foyer
+	_add_light(Vector3(-2.6, 1.65, -4.4), Color(1.0, 0.8, 0.55), 1.4, 6.0, "steady") # TV lamp
+	_add_light(Vector3(-5.8, 1.9, -0.5), Color(1.0, 0.75, 0.5), 2.2, 9.0, "dying")   # living lamp
+	_add_light(Vector3(4.9, 2.4, -2.5), Color(0.85, 0.9, 1.0), 1.6, 8.0, "steady")   # kitchen
+	_add_light(Vector3(0.75, 2.4, -1.5), Color(1.0, 0.85, 0.65), 1.2, 7.0, "steady") # stair hall
+	_add_light(Vector3(0.75, 5.1, -1.5), Color(1.0, 0.85, 0.65), 1.2, 7.0, "steady") # upper hall
+	_add_light(Vector3(4.9, 5.0, -2.5), Color(1.0, 0.8, 0.6), 1.4, 8.0, "steady")    # bedroom
+	_add_light(Vector3(-5.5, 5.0, -3.0), Color(0.8, 1.0, 0.9), 1.4, 6.0, "buzz")     # bathroom
+	_add_light(Vector3(-4.0, 5.0, 3.0), Color(1.0, 0.85, 0.65), 1.0, 8.0, "steady")  # landing
+	_add_light(Vector3(0.0, -0.4, 0.5), Color(0.65, 0.75, 1.0), 0.9, 12.0, "buzz")   # basement

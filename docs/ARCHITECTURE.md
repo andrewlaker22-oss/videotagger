@@ -7,8 +7,8 @@
 ```
 Main (Node3D) — game_manager.gd
 ├── WorldEnvironment — dark fog + faint blue ambient (dimmed to ~0 on blackout)
-├── Apartment (Node3D) — apartment_builder.gd (builds the level in _ready)
-├── Player (CharacterBody3D) — player.gd
+├── Apartment (Node3D) — apartment_builder.gd (builds the two-story house in _ready)
+├── Player (CharacterBody3D) — player.gd (spawns on the porch, facing the front door)
 │   ├── CollisionShape3D (capsule r=0.35 h=1.7)
 │   └── Head (Node3D, y=1.6)
 │       └── Camera3D (fov 70)
@@ -26,7 +26,7 @@ Main (Node3D) — game_manager.gd
 | `player.gd` | WASD + mouse look, crosshair focus detection, raw input signals, camera shake | Game state (it emits signals; the manager decides) |
 | `dialogue_ui.gd` | Objective, prompt, dialogue box, timed choices + countdown, toasts, letterbox, ending screen, fade-in | Story data, state |
 | `interactable.gd` | Hotspot node: `interact_id`, `prompt`, `enabled` | Its story meaning (that's in `story_data`) |
-| `apartment_builder.gd` | Level geometry from `WALLS` data table, props, lights + flicker, door tween, blackout | Story |
+| `apartment_builder.gd` | Level geometry from `WALLS` data table, stairs (visual steps + collision ramps), props, lights + flicker, door tween, blackout, power stutter | Story |
 | `audio_manager.gd` | `play_sfx` / `play_music` / `stop_music` hooks (currently print) | Anything else |
 
 ## The story state machine
@@ -59,11 +59,42 @@ is the canonical schema reference). Summary:
 - **Line**: `{ who, text, if?, if_not?, sfx? }` — `who: ""` = narration.
 - **Choice**: `{ text, next, set?, toast?, default? }` — exactly one `default` per beat.
 - **Effects**: `"open_door"` (swings the front door), `"blackout"` (kills lights,
-  disables interactables, camera shake, sfx), `"phone_ring"`.
+  disables interactables except the breaker box, camera shake, sfx),
+  `"power_stutter"` (lights flicker back for ~1.6 s, then die again),
+  `"phone_ring"`.
 - **Endings**: `{ id: { title, subtitle } }` — ESCAPE / HIDE / CONFRONT.
 
 `get_trigger_beats()` maps `Interactable.interact_id` → beat id, so level
 designers place hotspots and writers name beats without touching each other's files.
+
+## Floor plan (all dimensions in meters)
+
+Footprint x in [-7, 7], z in [-5, 5]. Three stories, 2.7 m each: basement floor
+at y=-2.7, ground at y=0, upper at y=2.7, roof slab at y=5.4. Floor slabs have
+stairwell holes; guard walls (1 m) ring the holes on each floor.
+
+- **Porch** (outside, south): stoop x in [-0.4, 2.0], z in [5.0, 6.4] with
+  railings. Player spawns here facing the front door (south wall gap x in
+  [0.2, 1.4], swings inward).
+- **Ground**: foyer (x in [-1, 2.5], z in [1, 5]), living room (west, x in
+  [-7, -1]: couch, TV + screen, two floor lamps), kitchen (east, x in
+  [2.5, 7]: counter, stove, fridge + note, knife), stair hall (x in [-1, 2.5],
+  z in [-5, 1]).
+- **Stairs** (in the stair hall, z from 0.9 down to -4.0, ~29°):
+  - Up-run x in [-0.7, 0.5] → upper hall. Down-run x in [0.9, 2.1] → basement.
+  - Visual steps are thin boxes with NO collision; each run has ONE sloped
+    ramp StaticBody3D the player walks on.
+- **Upper**: hall (x in [-1, 2.5], z in [-5, 1]), bedroom (east, x in [2.5, 7]:
+  bed, nightstand + photo, closet), bathroom (north-west, x in [-7, -3.5],
+  z in [-5, -1]: sink + mirror, toilet, tub), open landing (south).
+- **Basement**: open dim space, support columns, storage boxes, breaker box on
+  the east wall (x≈6.8, z=-1.0) with a red LED so it can be found in the dark.
+
+Interactable positions: `fridge_note` (6.1, 1.35, -3.95), `kitchen_knife`
+(4.9, 1.1, -4.25), `bedroom_photo` (4.3, 3.55, -4.5), `bedroom_closet` (6.35,
+3.8, -4.15), `bathroom_mirror` (-6.3, 4.3, -4.1), `breaker_box` (6.4, -1.35,
+-1.0). The blackout disables every interactable EXCEPT `breaker_box`, which
+the `breaker` beat needs afterwards.
 
 ## Data flow example (the knife)
 

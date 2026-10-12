@@ -11,7 +11,7 @@ extends RefCounted
 ## Beat schema:
 ##   "objective": String        - HUD objective text set when the beat starts (optional).
 ##   "effects": Array[String]   - one-shot world effects at beat start: "open_door",
-##                                "blackout", "phone_ring" (optional).
+##                                "blackout", "power_stutter", "phone_ring" (optional).
 ##   "lines": Array[Dictionary] - dialogue shown in order. Each line:
 ##       "who":  speaker tag ("" = narration, no speaker label)
 ##       "text": the line itself
@@ -47,6 +47,7 @@ static func get_trigger_beats() -> Dictionary:
 		"bedroom_closet": "closet",
 		"bathroom_mirror": "mirror",
 		"kitchen_knife": "knife",
+		"breaker_box": "breaker",
 	}
 
 
@@ -184,6 +185,25 @@ static func get_beats() -> Dictionary:
 				{"who": "", "text": "The knife is heavier than you expected.", "if": "has_knife"},
 				{"who": "", "text": "Silence. Then — the front door handle rattles.", "sfx": "door_rattle"},
 				{"who": "MARA", "text": "No no no—"},
+			],
+			"next": "find_breaker",
+		},
+		# ------------------------------------------------------------------
+		# 5b. BREAKER — the basement. Objective-only beat: sends the player
+		# down to the breaker box; the "breaker_box" interactable (which the
+		# blackout deliberately leaves enabled) triggers the "breaker" beat.
+		# ------------------------------------------------------------------
+		"find_breaker": {
+			"objective": "Find the breaker box in the basement.",
+		},
+		"breaker": {
+			"objective": "Survive.",
+			"effects": ["power_stutter"],
+			"lines": [
+				{"who": "", "text": "The breaker box hangs open. Every switch is thrown to OFF."},
+				{"who": "MARA", "text": "Come on. Come on—"},
+				{"who": "", "text": "You throw the main breaker. The lights gasp back — one heartbeat, two —", "sfx": "power_stutter"},
+				{"who": "", "text": "Then they die again. The dark feels closer now."},
 			],
 			"timer": 5.0,
 			"choices": [

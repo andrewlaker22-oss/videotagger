@@ -212,5 +212,8 @@ func _apply_effect(effect_name: String) -> void:
 				tw.tween_property(world_env.environment, "ambient_light_energy", 0.05, 1.2)
 		"phone_ring":
 			audio.play_sfx("phone_ring")
+		"power_stutter":
+			apartment.stutter_power()
+			audio.play_sfx("power_stutter")
 		_:
 			push_warning("GameManager: unknown beat effect '%s'." % effect_name)

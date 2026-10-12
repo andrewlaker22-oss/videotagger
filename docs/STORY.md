@@ -130,7 +130,21 @@ Notation: `(beat: id)` = story beat; `[CHOICE — 6s]` = timed choice with timeo
 >
 > **MARA:** No no no—
 
-**[CHOICE — 5 s]**
+→ `find_breaker` — objective: *Find the breaker box in the basement.*
+
+---
+
+## 6b. BREAKER `(beat: breaker)` — the basement breaker box
+
+> The breaker box hangs open. Every switch is thrown to OFF.
+>
+> **MARA:** Come on. Come on—
+>
+> You throw the main breaker. The lights gasp back — one heartbeat, two — *(sfx: power_stutter)*
+>
+> Then they die again. The dark feels closer now.
+
+**[CHOICE — 5 s]** — objective: *Survive.*
 - Run for the fire escape → `end_escape` → **ENDING: ESCAPE**
 - Hide in the closet ★ → `end_hide` → **ENDING: HIDE**
 - Confront them at the door → `end_confront` → **ENDING: CONFRONT**
