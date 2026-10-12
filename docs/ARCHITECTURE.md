@@ -180,6 +180,41 @@ unlocks the next; the HUD objective tracks the current item.
   (books, frame, plant, mug, bowl, pot, lamp, clock, clothes, towel, soap,
   toilet paper, note) for both the in-hand mesh and the placed prop.
 
+## Hiding spots (for the future stalker room-check — no stalker AI yet)
+
+Three enterable closets, built as hollow carcasses with hinged doors that
+swing **outward** (never through a hidden player). The GameManager owns the
+hide/unhide state; the builder only makes the set dressing.
+
+- **Spots** (`ApartmentBuilder.HIDE_CLOSETS`): `bedroom_closet` — the bedroom
+  wardrobe, east wall (x≈6.35, z≈-0.5); `bathroom_closet` — linen cabinet on
+  the bathroom south wall (-6.0, -1.5); `foyer_closet` — coat closet on the
+  foyer east wall (1.85, 3.5). Interior ≈0.98 × 0.88 m fits the 0.7 m
+  capsule. Each has a `hide_<spot>` hotspot ("Hide", reusable, never
+  one-shot) in front of its door.
+- **The bedroom wardrobe doubles as the "closet" story beat.** Its Hide
+  hotspot is not created until that beat is consumed (then the story
+  hotspot is fully retired, collision included, so the two prompts never
+  compete for or occlude each other on the same door).
+- **Hide** (`GameManager._hide`): E on the hotspot → player snaps just
+  inside facing outward, the door tweens shut, movement locks
+  (`PlayerController.movement_locked` — WASD only, look stays) with yaw
+  clamped to a ±60° peek cone (`set_yaw_limits`), and a persistent
+  "Hidden — E to come out" prompt shows. The spot's own hotspot disables
+  while occupied; other prompts are suppressed.
+- **Unhide** (`GameManager._unhide`): E → door tweens open, then the player
+  steps back out to where they stood when they hid. Instant variant used
+  when a story beat fires mid-hide (`start_beat` unhides first — beats never
+  play while hidden). Phone still works while hidden; closing it keeps
+  movement locked until exit. `disable_all_interactables()` skips `hide_*`
+  so hiding stays available during the blackout.
+- **Future-proof state** (no stalker code touches it yet):
+  `GameManager.is_player_hidden() -> bool` and
+  `GameManager.hidden_spot_id: String` (`""` when not hidden).
+- **Builder API**: `set_hide_door(spot_id, open)` (tween),
+  `set_hide_door_immediate(spot_id, open)` (snap), `add_hide_hotspot(spot_id)`
+  (create/re-enable; safe for the future stalker sequence to call).
+
 ## Floor plan (all dimensions in meters)
 
 Footprint x in [-7, 7], z in [-5, 5]. Three stories, 2.7 m each: basement floor
