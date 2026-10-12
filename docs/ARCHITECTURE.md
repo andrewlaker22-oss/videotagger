@@ -215,6 +215,57 @@ hide/unhide state; the builder only makes the set dressing.
   `set_hide_door_immediate(spot_id, open)` (snap), `add_hide_hotspot(spot_id)`
   (create/re-enable; safe for the future stalker sequence to call).
 
+## Pause menu, save system, settings
+
+**Pause menu** (`menu_ui.gd`, CanvasLayer layer 30, code-built like
+`dialogue_ui.gd`). Esc priority in EXPLORE: phone open → close phone;
+wash mode → exit wash; menu open → close menu; otherwise → open menu.
+(Esc does nothing during DIALOGUE/CHOICE/ENDING.) While open the game keeps
+rendering behind a dim overlay (no tree-pause, like the phone): input
+locked, mouse released. Views: main (Resume / Save Game / Load Game /
+Settings / Quit to Desktop), settings, and a 3-slot list. The GameManager
+drives open/close and handles the signals; Tab and E are suppressed while
+the menu is open.
+
+**Settings** (`settings_manager.gd`, persisted in `user://settings.cfg`
+via ConfigFile, applied at boot and on every change):
+- Master Volume 0–100 → `AudioManager.volume` (0..1; audio is still
+  stubbed, so this is stored/plumbed for the real implementation).
+- Mouse Sensitivity 0.5x–2x → `PlayerController.mouse_sensitivity`
+  (base 0.0024 × multiplier), applied live.
+- Invert Y toggle → `PlayerController.invert_y`, applied in mouse look.
+
+**Save system** (`save_manager.gd` + GameManager collect/apply). Three
+manual slots at `user://save_slot_1..3.json` (versioned JSON). Slot buttons
+show timestamp + current objective, or "Empty"/"Corrupted". Missing or
+corrupt slots toast ("Empty slot." / "Save corrupted.") and never crash.
+
+Save payload: flags dict, state (always EXPLORE — the menu only opens in
+free roam), player position + yaw + pitch, checklist/chore/unpack progress,
+phone threads (all messages + unread) and clock minutes, world state
+(blackout, mechanical door open/closed, front door), and the list of
+currently-disabled hotspot ids (consumed one-shots etc.).
+
+Each manager owns its state via `serialize()`/`deserialize()`:
+- `ChoreManager`: trash deposited, bags taken, first-deposit flag, dishes
+  done (plates snap instantly to the rack on load). Carrying is never
+  restored — the bag stays taken.
+- `UnpackManager`: started/finished, items placed (props re-spawned),
+  remaining per box, opened lids, box/zone hotspot states. A carried item
+  goes back into its box.
+- `PhoneUI`: messages per thread, unread counts, clock minutes (threads
+  themselves are rebuilt from story data at boot).
+- `ApartmentBuilder.serialize_world()/deserialize_world()`: blackout flag,
+  door states (snapped, no tween), front door.
+
+On load: flags → phone → world (blackout re-applies
+`disable_all_interactables()` + dims ambient) → `_refresh_checklist()`
+(rebuilds phone checklist UI, re-arms the Mom quick-reply, re-unlocks
+unpacking) → chore/unpack deserializes → bedroom hide-hotspot gating via
+the `closet_beat_done` flag → disabled hotspots → player transform. The
+player always loads **unhidden**. HUD objective/checklist are rebuilt, then
+the saved objective string is restored.
+
 ## Floor plan (all dimensions in meters)
 
 Footprint x in [-7, 7], z in [-5, 5]. Three stories, 2.7 m each: basement floor
